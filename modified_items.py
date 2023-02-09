@@ -1,15 +1,67 @@
 from __future__ import annotations
 from functools import partial
 import math
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple, Any
 
 import torch
 import torch.nn as nn
 from lightly.models import utils
 
-# vision_transformer requires torchvision >= 0.12
+#  vision_transformer requires torchvision >= 0.12
 from torchvision.models import vision_transformer
 from torchvision.models.vision_transformer import ConvStemConfig
+from typing import Optional, Tuple, Union
+
+
+def learned_token_mask(
+    size: Tuple[int, int],
+    mask_ratio: float = 0.6,
+    mask_class_token: bool = False,
+    device: Optional[Union[torch.device, str]] = None,
+    mask=None,
+):
+    """Creates random token masks.
+
+    Args:
+        size:
+            Size of the token batch for which to generate masks.
+            Should be (batch_size, sequence_length).
+        mask_ratio:
+            Percentage of tokens to mask.
+        mask_class_token:
+            If False the class token is never masked. If True the class token
+            might be masked.
+        device:
+            Device on which to create the index masks.
+
+    Returns:
+        A (index_keep, index_mask) tuple where each index is a tensor.
+        index_keep contains the indices of the unmasked tokens and has shape
+        (batch_size, num_keep). index_mask contains the indices of the masked
+        tokens and has shape (batch_size, sequence_length - num_keep).
+        num_keep is equal to sequence_length * (1- mask_ratio).
+
+    """
+    batch_size, sequence_length = size
+    num_keep = int(sequence_length * (1 - mask_ratio))
+
+    if mask is not None:
+        # topk from mask
+        # keep = torch.topk(mask, num_keep, dim=1, largest=False)[1]
+        keep = torch.topk(mask, num_keep, dim=1)[1]
+    else:
+        noise = torch.rand(batch_size, sequence_length, device=device)
+        if not mask_class_token and sequence_length > 0:
+            # make sure that class token is not masked
+            noise[:, 0] = -1
+            num_keep = max(1, num_keep)
+
+        # get indices of tokens to keep
+        indices = torch.argsort(noise, dim=1)
+        idx_keep = indices[:, :num_keep]
+        idx_mask = indices[:, num_keep:]
+
+    return idx_keep, idx_mask
 
 
 class MAEEncoder(vision_transformer.Encoder):
@@ -64,7 +116,7 @@ class MAEEncoder(vision_transformer.Encoder):
     def from_vit_encoder(cls, vit_encoder: vision_transformer.Encoder) -> MAEEncoder:
         """Creates a MAEEncoder from a torchvision ViT encoder."""
         # Create a new instance with dummy values as they will be overwritten
-        # by the copied vit_encoder attributes
+        #  by the copied vit_encoder attributes
         encoder = cls(
             seq_length=1,
             num_layers=1,
@@ -101,7 +153,13 @@ class MAEEncoder(vision_transformer.Encoder):
         input = input + self.interpolate_pos_encoding(input)
         if idx_keep is not None:
             input = utils.get_at_index(input, idx_keep)
-        return self.ln(self.layers(self.dropout(input)))
+        a = self.dropout(input)
+        blocks = []
+        for blk in self.layers:
+            a = blk(a)
+            blocks.append(self.ln(a))
+        return self.ln(a), blocks
+        # return self.ln(self.layers(self.dropout(input)))
 
     def interpolate_pos_encoding(self, input: torch.Tensor):
         """Returns the interpolated positional embedding for the given input.
@@ -220,7 +278,7 @@ class MAEBackbone(vision_transformer.VisionTransformer):
     def from_vit(cls, vit: vision_transformer.VisionTransformer) -> MAEBackbone:
         """Creates a MAEBackbone from a torchvision ViT model."""
         # Create a new instance with dummy values as they will be overwritten
-        # by the copied vit_encoder attributes
+        #  by the copied vit_encoder attributes
         backbone = cls(
             image_size=vit.image_size,
             patch_size=vit.patch_size,
@@ -262,9 +320,36 @@ class MAEBackbone(vision_transformer.VisionTransformer):
             encoded class token for every image.
 
         """
-        out = self.encode(images, idx_keep)
+        out, blocks = self.encode(images, idx_keep)
         class_token = out[:, 0]
         return class_token
+
+    def forward_blocks(
+            self,
+            images: torch.Tensor,
+            idx_keep: Optional[torch.Tensor] = None
+    ) -> Tuple[Any, List[Any]]:
+        """Returns encoded class tokens from a batch of images.
+
+        Args:
+            images:
+                Tensor with shape (batch_size, channels, image_size, image_size).
+            idx_keep:
+                Tensor with shape (batch_size, num_tokens_to_keep) where each
+                entry is an index of the token to keep in the respective batch.
+                If specified, only the indexed tokens will be passed to the
+                encoder.
+
+        Returns:
+            Tensor with shape (batch_size, hidden_dim) containing the
+            encoded class token for every image.
+
+        """
+        out, blocks = self.encode(images, idx_keep)
+        class_token = out[:, 0]
+        blocks_class_token = [block[:, 0] for block in blocks]
+        return class_token, blocks_class_token
+
 
     def encode(
             self,
@@ -287,11 +372,11 @@ class MAEBackbone(vision_transformer.VisionTransformer):
             containing the encoded class and patch tokens for every image.
 
         """
-        out = self.images_to_tokens(images, prepend_class_token=True)
+        out = self.images_to_tokens(images)
+        out = utils.prepend_class_token(out, self.class_token)
         return self.encoder(out, idx_keep)
 
-
-    def images_to_tokens(self, images: torch.Tensor, prepend_class_token: bool) -> torch.Tensor:
+    def images_to_tokens(self, images: torch.Tensor) -> torch.Tensor:
         """Converts images into patch tokens.
 
         Args:
@@ -303,10 +388,7 @@ class MAEBackbone(vision_transformer.VisionTransformer):
             containing the patch tokens.
         """
         x = self.conv_proj(images)
-        tokens =  x.flatten(2).transpose(1, 2)
-        if prepend_class_token:
-            tokens = utils.prepend_class_token(tokens, self.class_token)
-        return tokens
+        return x.flatten(2).transpose(1, 2)
 
 
 class MAEDecoder(vision_transformer.Encoder):
