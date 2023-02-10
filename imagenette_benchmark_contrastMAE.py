@@ -1666,12 +1666,12 @@ class TiCoModel(BenchmarkModule):
 
 models = [
     SimCLRModel,
+    DINOModel,
     MAEModel,
+    SwaVModel,
     BYOLModel,
     MSNModel,
     SimMIMModel,
-    DINOModel,
-    SwaVModel,
     TiCoModel,
     VICRegLModel,
 ]
