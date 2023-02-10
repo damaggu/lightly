@@ -2,3 +2,4 @@ matplotlib
 scikit-learn
 kornia
 wandb
+pytorch_lightning==1.8.6
