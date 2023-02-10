@@ -111,18 +111,18 @@ else:
     raise ValueError('Invalid dataset name')
 
 # Set to True to enable Distributed Data Parallel training.
-distributed = True
+distributed = False
 
 # Set to True to enable Synchronized Batch Norm (requires distributed=True).
 # If enabled the batch norm is calculated over all gpus, otherwise the batch
 # norm is only calculated from samples on the same gpu.
-sync_batchnorm = True
+sync_batchnorm = False
 
 # Set to True to gather features from all gpus before calculating
 # the loss (requires distributed=True).
 # If enabled then the loss on every gpu is calculated with features from all
 # gpus, otherwise only features from the same gpu are used.
-gather_distributed = True
+gather_distributed = False
 
 # benchmark
 n_runs = 1  # optional, increase to create multiple runs and report mean + std
