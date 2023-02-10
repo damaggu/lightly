@@ -1111,7 +1111,7 @@ class MSNModel(BenchmarkModule):
         utils.deactivate_requires_grad(self.backbone)
         utils.deactivate_requires_grad(self.projection_head)
 
-        self.prototypes = nn.Linear(256, 1024, bias=False).weight
+        self.prototypes = nn.Linear(384, 1024, bias=False).weight
         self.criterion = lightly.loss.MSNLoss()
 
         # self.mask = torch.ones(3, 128, 128, dtype=torch.float, requires_grad=True)
