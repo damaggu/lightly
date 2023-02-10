@@ -88,7 +88,7 @@ memory_bank_size = 4096
 max_epochs = 100
 knn_k = 200
 knn_t = 0.1
-classes = 10
+classes = 10000
 
 masking_ratio = 0.75
 patch_size = 16
