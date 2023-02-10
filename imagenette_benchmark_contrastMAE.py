@@ -85,7 +85,7 @@ num_workers = 12
 memory_bank_size = 4096
 
 # set max_epochs to 800 for long run (takes around 10h on a single V100)
-max_epochs = 3
+max_epochs = 2
 knn_k = 200
 knn_t = 0.1
 classes = 10
@@ -421,7 +421,9 @@ class SimCLRModel(BenchmarkModule):
             *list(resnet.children())[:-1], nn.AdaptiveAvgPool2d(1)
         )
         self.projection_head = heads.SimCLRProjectionHead(feature_dim, feature_dim, 128)
-        self.criterion = lightly.loss.NTXentLoss()
+        self.criterion = lightly.loss.NTXentLoss(
+            gather_distributed=gather_distributed
+        )
 
     def forward(self, x):
         x = self.backbone(x).flatten(start_dim=1)
@@ -1663,8 +1665,15 @@ class TiCoModel(BenchmarkModule):
 # ]
 
 models = [
-    # BYOLModel,
+    SimCLRModel,
+    MAEModel,
+    BYOLModel,
+    MSNModel,
+    SimMIMModel,
     DINOModel,
+    SwaVModel,
+    TiCoModel,
+    VICRegLModel,
 ]
 bench_results = dict()
 from pytorch_lightning.loggers import WandbLogger
