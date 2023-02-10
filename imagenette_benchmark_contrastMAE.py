@@ -915,7 +915,7 @@ class DCLW(BenchmarkModule):
 #         else:
 #             return 0.5 * (1. + math.cos(math.pi * (epoch - self.warmup_epochs) / (max_epochs - self.warmup_epochs)))
 
-
+from lightly.models.modules import masked_autoencoder
 class MAEModel(BenchmarkModule):
     def __init__(self, dataloader_kNN, num_classes):
         super().__init__(dataloader_kNN, num_classes)
