@@ -65,7 +65,6 @@ from modified_items import MAEBackbone, MAEDecoder, learned_token_mask
 from lightly.models import utils
 from lightly.utils import BenchmarkModule
 from lightly.utils import scheduler
-from pytorch_lightning.loggers import TensorBoardLogger
 from kornia import filters
 from torch.nn import functional as F
 from pl_bolts.optimizers.lars import LARS
