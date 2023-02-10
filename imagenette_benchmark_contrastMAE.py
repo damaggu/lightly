@@ -819,39 +819,124 @@ class DCLW(BenchmarkModule):
         return [optim], [cosine_scheduler]
 
 
+# class MAEModel(BenchmarkModule):
+#     def __init__(self, dataloader_kNN, num_classes):
+#         super().__init__(dataloader_kNN, num_classes)
+#
+#         decoder_dim = 512
+#         my_patch_size = 16
+#         vit = _vision_transformer(
+#                     # patch_size=self.patch_size,
+#                     patch_size=16,
+#                     num_layers=12,
+#                     num_heads=12,
+#                     hidden_dim=768,
+#                     mlp_dim=3072,
+#                     progress = True,
+#                     weights=None,
+#         )
+#
+#         self.warmup_epochs = 40 if max_epochs >= 800 else 20
+#         self.mask_ratio = masking_ratio
+#         # self.patch_size = vit.patch_size
+#         # self.patch_size = patch_size
+#         self.patch_size = my_patch_size
+#         self.sequence_length = vit.seq_length
+#         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
+#         self.backbone = MAEBackbone.from_vit(vit)
+#         self.decoder = MAEDecoder(
+#             seq_length=vit.seq_length,
+#             num_layers=1,
+#             num_heads=16,
+#             embed_input_dim=vit.hidden_dim,
+#             hidden_dim=decoder_dim,
+#             mlp_dim=decoder_dim * 4,
+#             out_dim=my_patch_size**2 * 3,
+#             dropout=0,
+#             attention_dropout=0,
+#         )
+#         self.criterion = nn.MSELoss()
+#
+#     def forward_encoder(self, images, idx_keep=None):
+#         return self.backbone.encode(images, idx_keep)
+#
+#     def forward_decoder(self, x_encoded, idx_keep, idx_mask):
+#         # build decoder input
+#         batch_size = x_encoded.shape[0]
+#         x_decode = self.decoder.embed(x_encoded)
+#         x_masked = utils.repeat_token(
+#             self.mask_token, (batch_size, self.sequence_length)
+#         )
+#         x_masked = utils.set_at_index(x_masked, idx_keep, x_decode)
+#
+#         # decoder forward pass
+#         x_decoded = self.decoder.decode(x_masked)
+#
+#         # predict pixel values for masked tokens
+#         x_pred = utils.get_at_index(x_decoded, idx_mask)
+#         x_pred = self.decoder.predict(x_pred)
+#         return x_pred
+#
+#     def training_step(self, batch, batch_idx):
+#         images, _, _ = batch
+#
+#         batch_size = images.shape[0]
+#         idx_keep, idx_mask = utils.random_token_mask(
+#             size=(batch_size, self.sequence_length),
+#             mask_ratio=self.mask_ratio,
+#             device=images.device,
+#         )
+#         #TODO: check why [0] is needed
+#         x_encoded = self.forward_encoder(images, idx_keep)[0]
+#         x_pred = self.forward_decoder(x_encoded, idx_keep, idx_mask)
+#
+#         # get image patches for masked tokens
+#         patches = utils.patchify(images, self.patch_size)
+#         # must adjust idx_mask for missing class token
+#         target = utils.get_at_index(patches, idx_mask - 1)
+#
+#         loss = self.criterion(x_pred, target)
+#         self.log('train_loss_ssl', loss)
+#         return loss
+#
+#     def configure_optimizers(self):
+#         optim = torch.optim.AdamW(
+#             self.parameters(),
+#             lr=1.5e-4 * lr_factor,
+#             weight_decay=0.05,
+#             betas=(0.9, 0.95),
+#         )
+#         cosine_with_warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(optim, self.scale_lr)
+#         return [optim], [cosine_with_warmup_scheduler]
+#
+#     def scale_lr(self, epoch):
+#         if epoch < self.warmup_epochs:
+#             return epoch / self.warmup_epochs
+#         else:
+#             return 0.5 * (1. + math.cos(math.pi * (epoch - self.warmup_epochs) / (max_epochs - self.warmup_epochs)))
+
+
 class MAEModel(BenchmarkModule):
     def __init__(self, dataloader_kNN, num_classes):
         super().__init__(dataloader_kNN, num_classes)
 
         decoder_dim = 512
-        my_patch_size = 16
-        vit = _vision_transformer(
-                    # patch_size=self.patch_size,
-                    patch_size=16,
-                    num_layers=12,
-                    num_heads=12,
-                    hidden_dim=768,
-                    mlp_dim=3072,
-                    progress = True,
-                    weights=None,
-        )
+        vit = torchvision.models.vit_b_32(pretrained=False)
 
         self.warmup_epochs = 40 if max_epochs >= 800 else 20
-        self.mask_ratio = masking_ratio
-        # self.patch_size = vit.patch_size
-        # self.patch_size = patch_size
-        self.patch_size = my_patch_size
+        self.mask_ratio = 0.75
+        self.patch_size = vit.patch_size
         self.sequence_length = vit.seq_length
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
-        self.backbone = MAEBackbone.from_vit(vit)
-        self.decoder = MAEDecoder(
+        self.backbone = masked_autoencoder.MAEBackbone.from_vit(vit)
+        self.decoder = masked_autoencoder.MAEDecoder(
             seq_length=vit.seq_length,
             num_layers=1,
             num_heads=16,
             embed_input_dim=vit.hidden_dim,
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
-            out_dim=my_patch_size**2 * 3,
+            out_dim=vit.patch_size**2 * 3,
             dropout=0,
             attention_dropout=0,
         )
@@ -886,8 +971,7 @@ class MAEModel(BenchmarkModule):
             mask_ratio=self.mask_ratio,
             device=images.device,
         )
-        #TODO: check why [0] is needed
-        x_encoded = self.forward_encoder(images, idx_keep)[0]
+        x_encoded = self.forward_encoder(images, idx_keep)
         x_pred = self.forward_decoder(x_encoded, idx_keep, idx_mask)
 
         # get image patches for masked tokens
@@ -896,7 +980,7 @@ class MAEModel(BenchmarkModule):
         target = utils.get_at_index(patches, idx_mask - 1)
 
         loss = self.criterion(x_pred, target)
-        self.log('train_loss_ssl', loss)
+        self.log("train_loss_ssl", loss)
         return loss
 
     def configure_optimizers(self):
@@ -906,14 +990,8 @@ class MAEModel(BenchmarkModule):
             weight_decay=0.05,
             betas=(0.9, 0.95),
         )
-        cosine_with_warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(optim, self.scale_lr)
-        return [optim], [cosine_with_warmup_scheduler]
-
-    def scale_lr(self, epoch):
-        if epoch < self.warmup_epochs:
-            return epoch / self.warmup_epochs
-        else:
-            return 0.5 * (1. + math.cos(math.pi * (epoch - self.warmup_epochs) / (max_epochs - self.warmup_epochs)))
+        cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, max_epochs)
+        return [optim], [cosine_scheduler]
 
 
 class contrastMAEModel(BenchmarkModule):
@@ -1665,15 +1743,15 @@ class TiCoModel(BenchmarkModule):
 # ]
 
 models = [
-    SimCLRModel,
-    DINOModel,
+    # SimCLRModel,
+    # DINOModel,
     MAEModel,
-    SwaVModel,
-    BYOLModel,
-    MSNModel,
-    SimMIMModel,
-    TiCoModel,
-    VICRegLModel,
+    # SwaVModel,
+    # BYOLModel,
+    # MSNModel,
+    # SimMIMModel,
+    # TiCoModel,
+    # VICRegLModel,
 ]
 bench_results = dict()
 
