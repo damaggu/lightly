@@ -1676,7 +1676,7 @@ models = [
     VICRegLModel,
 ]
 bench_results = dict()
-from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.loggers.wandb import WandbLogger
 
 contrastive_types = [
     'byol',
