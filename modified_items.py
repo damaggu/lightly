@@ -153,13 +153,35 @@ class MAEEncoder(vision_transformer.Encoder):
         input = input + self.interpolate_pos_encoding(input)
         if idx_keep is not None:
             input = utils.get_at_index(input, idx_keep)
+        return self.ln(self.layers(self.dropout(input)))
+
+    def forward_blocks(
+            self,
+            input: torch.Tensor,
+            idx_keep: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """Encode input tokens.
+
+        Args:
+            input:
+                Batch of token sequences.
+            idx_keep:
+                Tensor with shape (batch_size, num_tokens_to_keep) where each
+                entry is an index of the token to keep in the respective batch.
+                If specified, only the indexed tokens will be encoded.
+
+        Returns:
+            Batch of encoded output tokens.
+        """
+        input = input + self.interpolate_pos_encoding(input)
+        if idx_keep is not None:
+            input = utils.get_at_index(input, idx_keep)
         a = self.dropout(input)
         blocks = []
         for blk in self.layers:
             a = blk(a)
             blocks.append(self.ln(a))
         return self.ln(a), blocks
-        # return self.ln(self.layers(self.dropout(input)))
 
     def interpolate_pos_encoding(self, input: torch.Tensor):
         """Returns the interpolated positional embedding for the given input.
@@ -320,7 +342,7 @@ class MAEBackbone(vision_transformer.VisionTransformer):
             encoded class token for every image.
 
         """
-        out, blocks = self.encode(images, idx_keep)
+        out = self.encode(images, idx_keep)
         class_token = out[:, 0]
         return class_token
 
@@ -372,11 +394,11 @@ class MAEBackbone(vision_transformer.VisionTransformer):
             containing the encoded class and patch tokens for every image.
 
         """
-        out = self.images_to_tokens(images)
-        out = utils.prepend_class_token(out, self.class_token)
+        out = self.images_to_tokens(images, prepend_class_token=True)
         return self.encoder(out, idx_keep)
 
-    def images_to_tokens(self, images: torch.Tensor) -> torch.Tensor:
+
+    def images_to_tokens(self, images: torch.Tensor, prepend_class_token: bool) -> torch.Tensor:
         """Converts images into patch tokens.
 
         Args:
@@ -388,7 +410,10 @@ class MAEBackbone(vision_transformer.VisionTransformer):
             containing the patch tokens.
         """
         x = self.conv_proj(images)
-        return x.flatten(2).transpose(1, 2)
+        tokens =  x.flatten(2).transpose(1, 2)
+        if prepend_class_token:
+            tokens = utils.prepend_class_token(tokens, self.class_token)
+        return tokens
 
 
 class MAEDecoder(vision_transformer.Encoder):
