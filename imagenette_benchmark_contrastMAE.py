@@ -88,7 +88,7 @@ memory_bank_size = 4096
 max_epochs = 100
 knn_k = 200
 knn_t = 0.1
-classes = 10000
+# classes = 10000
 
 masking_ratio = 0.75
 patch_size = 16
@@ -282,17 +282,18 @@ elif dataset_name == 'iNat2021mini':
 else:
     raise ValueError('Unknown dataset name')
 
-dataset_train_ssl = lightly.data.LightlyDataset(input_dir=path_to_train)
 
+dataset_train_ssl = lightly.data.LightlyDataset(input_dir=path_to_train)
 # we use test transformations for getting the feature for kNN on train data
 dataset_train_kNN = lightly.data.LightlyDataset(
     input_dir=path_to_train, transform=test_transforms
 )
-
 dataset_test = lightly.data.LightlyDataset(
     input_dir=path_to_test, transform=test_transforms
 )
 
+classes = len(dataset_test.dataset.classes)
+print('dataset_train_ssl length:', len(dataset_train_ssl))
 
 def get_data_loaders(batch_size: int, model):
     """Helper method to create dataloaders for ssl, kNN train and kNN test
@@ -1166,14 +1167,249 @@ class contrastMAEModel(BenchmarkModule):
             return 0.5 * (1. + math.cos(math.pi * (epoch - self.warmup_epochs) / (max_epochs - self.warmup_epochs)))
 
 
+# class MSNModel(BenchmarkModule):
+#     def __init__(self, dataloader_kNN, num_classes):
+#         super().__init__(dataloader_kNN, num_classes)
+#
+#         self.warmup_epochs = 15
+#         #  ViT small configuration (ViT-S/16)
+#         self.mask_ratio = msn_masking_ratio
+#         self.backbone = MAEBackbone(
+#             image_size=224,
+#             patch_size=16,
+#             num_layers=12,
+#             num_heads=6,
+#             hidden_dim=384,
+#             mlp_dim=384 * 4,
+#         )
+#         self.projection_head = heads.MSNProjectionHead(384)
+#
+#         self.anchor_backbone = copy.deepcopy(self.backbone)
+#         self.anchor_projection_head = copy.deepcopy(self.projection_head)
+#
+#         utils.deactivate_requires_grad(self.backbone)
+#         utils.deactivate_requires_grad(self.projection_head)
+#
+#         self.prototypes = nn.Linear(384, 1024, bias=False).weight
+#         self.criterion = lightly.loss.MSNLoss()
+#
+#         # self.mask = torch.ones(3, 128, 128, dtype=torch.float, requires_grad=True)
+#         # self.mask = torch.rand(128, 64, dtype=torch.float, requires_grad=True)
+#         import torch
+#         from torchvision import transforms
+#         self.freeze_mask_model = True
+#         self.pretrained_mask_model = False
+#         self.mask = None
+#         self.maskmodel_backbone = torchvision.models.mobilenet_v3_small(
+#             pretrained=True if self.pretrained_mask_model else False
+#         ).features
+#         if self.freeze_mask_model:
+#             for param in self.maskmodel_backbone.parameters():
+#                 param.requires_grad = False
+#         self.maskmodel_head = nn.Sequential(
+#             # nn.AdaptiveAvgPool2d((1, 1)),
+#             nn.Flatten(),
+#             nn.Linear(576, 64),
+#             nn.ReLU(),
+#             nn.LayerNorm(64),
+#         )
+#         # self.maskmodel_decoder = nn.Sequential(
+#
+#     def training_step(self, batch, batch_idx):
+#         utils.update_momentum(self.anchor_backbone, self.backbone, 0.996)
+#         utils.update_momentum(self.anchor_projection_head, self.projection_head, 0.996)
+#         loss = 0
+#
+#         views, _, _ = batch
+#         views = [view.to(self.device, non_blocking=True) for view in views]
+#         targets = views[0]
+#         anchors = views[1]
+#         anchors_focal = torch.concat(views[2:], dim=0)
+#
+#         targets_out = self.backbone(targets)
+#         targets_out = self.projection_head(targets_out)
+#         anchors_out = self.encode_masked(anchors)
+#         anchors_out = self.anchor_projection_head(anchors_out)
+#         anchors_focal_out = self.encode_masked(anchors_focal)
+#         anchors_focal_out = self.anchor_projection_head(anchors_focal_out)
+#         anchors_out = torch.cat([anchors_out, anchors_focal_out], dim=0)
+#         if msn_aug_mode == 'v1':
+#             sobel_anchors = filters.sobel(anchors)
+#             sobel_anchors_out = self.encode_masked(sobel_anchors)
+#             anchors_out = torch.cat([anchors_out, sobel_anchors_out], dim=0)
+#         elif msn_aug_mode == 'v2':
+#             out_anchors = []
+#             for i in range(5):
+#                 # TODO: make this learnable?
+#                 # TODO: try other ftures of kornia
+#                 # TODO: try with random numbers for the kernel, but limited numbers and not too big and dont apply to image
+#                 # also try with bigger image in this case
+#                 kernel = torch.randn(3, 3, 3, 3).to(self.device)
+#                 test = F.conv2d(anchors, kernel, padding=1)
+#                 out_anchors.append(test)
+#             out_anchors = torch.cat(out_anchors, dim=0)
+#             out_anchors_out = self.encode_masked(out_anchors)
+#             anchors_out = torch.cat([anchors_out, out_anchors_out], dim=0)
+#         elif msn_aug_mode == 'v3':
+#             # shuffle anchors on dimension 1
+#             permutation = torch.randperm(anchors_out.size(1))
+#             # Shuffle the tensor's second dimension according to the permutation
+#             shuffled_tensor = anchors_out[:, permutation]
+#             anchors_out = torch.cat([anchors_out, shuffled_tensor], dim=0)
+#         elif msn_aug_mode == 'v4':
+#             # embed targets_blocks, anchors_blocks, anchors_focal_blocks
+#             _, targets_blocks = self.backbone.forward_blocks(targets)
+#             _, anchors_blocks = self.encode_blocks(anchors)
+#             _, anchors_focal_blocks = self.encode_blocks(anchors_focal)
+#
+#             targets_blocks = [self.projection_head(block) for block in targets_blocks]
+#             anchors_blocks = [self.anchor_projection_head(block) for block in anchors_blocks]
+#             anchors_focal_blocks = [self.anchor_projection_head(block) for block in anchors_focal_blocks]
+#             targets_blocks = torch.cat(targets_blocks, dim=0)
+#             anchors_blocks = torch.cat(anchors_blocks, dim=0)
+#             anchors_focal_blocks = torch.cat(anchors_focal_blocks, dim=0)
+#             anchors_blocks = torch.cat([anchors_blocks, anchors_focal_blocks], dim=0)
+#             # anchors_out = torch.cat([anchors_out, targets_blocks, anchors_blocks], dim=0)
+#         elif msn_aug_mode == 'v5':
+#             _, targets_blocks = self.backbone.forward_blocks(targets)
+#             _, anchors_blocks = self.encode_blocks(anchors)
+#             _, anchors_focal_blocks = self.encode_blocks(anchors_focal)
+#
+#             targets_blocks = [self.projection_head(block) for block in targets_blocks]
+#             anchors_blocks = [self.anchor_projection_head(block) for block in anchors_blocks]
+#             anchors_focal_blocks = [self.anchor_projection_head(block) for block in anchors_focal_blocks]
+#             idx = 0
+#             for target_block, anchor_block, anchor_focal_block in zip(targets_blocks, anchors_blocks, anchors_focal_blocks):
+#                 anchors_block_out = torch.cat([anchor_block, anchor_focal_block], dim=0)
+#                 loss += self.criterion(anchors_block_out, target_block, self.prototypes.data) * 0.5 ** idx
+#                 idx += 1
+#
+#         elif msn_aug_mode == 'v6':
+#             _, targets_blocks = self.backbone.forward_blocks(targets)
+#             _, anchors_blocks = self.encode_blocks(anchors)
+#             _, anchors_focal_blocks = self.encode_blocks(anchors_focal)
+#
+#             targets_blocks = [self.projection_head(block) for block in targets_blocks]
+#             anchors_blocks = [self.anchor_projection_head(block) for block in anchors_blocks]
+#             anchors_focal_blocks = [self.anchor_projection_head(block) for block in anchors_focal_blocks]
+#             idx = 0
+#             for target_block, anchor_block, anchor_focal_block in zip(targets_blocks, anchors_blocks, anchors_focal_blocks):
+#                 anchors_block_out = torch.cat([anchor_block, anchor_focal_block], dim=0)
+#                 loss += self.criterion(anchors_block_out, target_block, self.prototypes.data) * (1 - 0.5 ** idx)
+#                 idx += 1
+#
+#         elif msn_aug_mode == 'v7':
+#             _, targets_blocks = self.backbone.forward_blocks(targets)
+#             _, anchors_blocks = self.encode_blocks(anchors)
+#             _, anchors_focal_blocks = self.encode_blocks(anchors_focal)
+#
+#             targets_blocks = [self.projection_head(block) for block in targets_blocks]
+#             anchors_blocks = [self.anchor_projection_head(block) for block in anchors_blocks]
+#             anchors_focal_blocks = [self.anchor_projection_head(block) for block in anchors_focal_blocks]
+#             idx = 0
+#             num_blocks = len(targets_blocks)
+#             for target_block, anchor_block, anchor_focal_block in zip(targets_blocks, anchors_blocks, anchors_focal_blocks):
+#                 anchors_block_out = torch.cat([anchor_block, anchor_focal_block], dim=0)
+#                 loss += self.criterion(anchors_block_out, target_block, self.prototypes.data) * (idx+1/num_blocks)
+#                 idx += 1
+#
+#         elif msn_aug_mode == 'v8':
+#             _, targets_blocks = self.backbone.forward_blocks(targets)
+#             _, anchors_blocks = self.encode_blocks(anchors)
+#             _, anchors_focal_blocks = self.encode_blocks(anchors_focal)
+#
+#             targets_blocks = [self.projection_head(block) for block in targets_blocks]
+#             anchors_blocks = [self.anchor_projection_head(block) for block in anchors_blocks]
+#             anchors_focal_blocks = [self.anchor_projection_head(block) for block in anchors_focal_blocks]
+#             idx = 0
+#             num_blocks = len(targets_blocks)
+#             for target_block, anchor_block, anchor_focal_block in zip(targets_blocks, anchors_blocks, anchors_focal_blocks):
+#                 anchors_block_out = torch.cat([anchor_block, anchor_focal_block], dim=0)
+#                 for target_block_2, anchor_block_2, anchor_focal_block_2 in zip(targets_blocks, anchors_blocks, anchors_focal_blocks):
+#                     if anchor_block_2 is anchor_block:
+#                         continue
+#                     anchors_block_out = torch.cat([anchors_block_out, anchor_block_2, anchor_focal_block_2], dim=0)
+#                 loss += self.criterion(anchors_block_out, target_block, self.prototypes.data) * (idx+1/num_blocks)
+#                 idx += 1
+#
+#         elif msn_aug_mode == 'v9':
+#             _, targets_blocks = self.backbone.forward_blocks(targets)
+#             _, anchors_blocks = self.encode_blocks(anchors)
+#             _, anchors_focal_blocks = self.encode_blocks(anchors_focal)
+#
+#             targets_blocks = [self.projection_head(block) for block in targets_blocks]
+#             anchors_blocks = [self.anchor_projection_head(block) for block in anchors_blocks]
+#             anchors_focal_blocks = [self.anchor_projection_head(block) for block in anchors_focal_blocks]
+#             idx = 0
+#             num_blocks = len(targets_blocks)
+#             for target_block, anchor_block, anchor_focal_block in zip(targets_blocks, anchors_blocks, anchors_focal_blocks):
+#                 anchors_block_out = torch.cat([anchor_block, anchor_focal_block], dim=0)
+#                 for target_block_2, anchor_block_2, anchor_focal_block_2 in zip(targets_blocks, anchors_blocks, anchors_focal_blocks):
+#                     loss += self.criterion(anchors_block_out, target_block_2, self.prototypes.data) * (idx+1/num_blocks)
+#                 idx += 1
+#
+#         elif msn_aug_mode == 'v10':
+#             # add noise to anchors
+#             anchors_out = anchors_out + torch.randn_like(anchors_out) * 0.1
+#
+#         loss += self.criterion(anchors_out, targets_out, self.prototypes.data)
+#         if msn_aug_mode == 'v4':
+#             loss += self.criterion(anchors_blocks, targets_blocks, self.prototypes.data)
+#         self.log('train_loss_ssl', loss)
+#         return loss
+#
+#     def encode_masked(self, anchors, mask=None):
+#         batch_size, _, _, width = anchors.shape
+#         seq_length = (width // self.anchor_backbone.patch_size) ** 2
+#         if mask is None:
+#             idx_keep, _ = learned_token_mask(
+#                 size=(batch_size, seq_length),
+#                 mask_ratio=self.mask_ratio,
+#                 device=self.device,
+#                 mask = self.mask,
+#             )
+#         else:
+#             idx_keep, _ = utils.random_token_mask(
+#                 size=(batch_size, seq_length),
+#                 mask_ratio=self.mask_ratio,
+#                 device=self.device,
+#             )
+#         out = self.anchor_backbone(anchors, idx_keep)
+#         return self.anchor_projection_head(out)
+#
+#     def encode_blocks(self, anchors):
+#         batch_size, _, _, width = anchors.shape
+#         seq_length = (width // self.anchor_backbone.patch_size) ** 2
+#         idx_keep, _ = utils.random_token_mask(
+#             size=(batch_size, seq_length),
+#             mask_ratio=self.mask_ratio,
+#             device=self.device,
+#         )
+#         out, blocks_out = self.anchor_backbone.forward_blocks(anchors, idx_keep)
+#         return out, blocks_out
+#
+#     def configure_optimizers(self):
+#         params = [
+#             *list(self.anchor_backbone.parameters()),
+#             *list(self.anchor_projection_head.parameters()),
+#             self.prototypes,
+#         ]
+#         optim = torch.optim.AdamW(
+#             params=params,
+#             lr=1.5e-4 * lr_factor,
+#             weight_decay=0.05,
+#             betas=(0.9, 0.95),
+#         )
+#         cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, max_epochs)
+#         return [optim], [cosine_scheduler]
 class MSNModel(BenchmarkModule):
     def __init__(self, dataloader_kNN, num_classes):
         super().__init__(dataloader_kNN, num_classes)
 
         self.warmup_epochs = 15
-        #  ViT small configuration (ViT-S/16)
-        self.mask_ratio = msn_masking_ratio
-        self.backbone = MAEBackbone(
+        # ViT small configuration (ViT-S/16)
+        self.mask_ratio = 0.15
+        self.backbone = masked_autoencoder.MAEBackbone(
             image_size=224,
             patch_size=16,
             num_layers=12,
@@ -1189,35 +1425,12 @@ class MSNModel(BenchmarkModule):
         utils.deactivate_requires_grad(self.backbone)
         utils.deactivate_requires_grad(self.projection_head)
 
-        self.prototypes = nn.Linear(384, 1024, bias=False).weight
+        self.prototypes = nn.Linear(256, 1024, bias=False).weight
         self.criterion = lightly.loss.MSNLoss()
-
-        # self.mask = torch.ones(3, 128, 128, dtype=torch.float, requires_grad=True)
-        # self.mask = torch.rand(128, 64, dtype=torch.float, requires_grad=True)
-        import torch
-        from torchvision import transforms
-        self.freeze_mask_model = True
-        self.pretrained_mask_model = False
-        self.mask = None
-        self.maskmodel_backbone = torchvision.models.mobilenet_v3_small(
-            pretrained=True if self.pretrained_mask_model else False
-        ).features
-        if self.freeze_mask_model:
-            for param in self.maskmodel_backbone.parameters():
-                param.requires_grad = False
-        self.maskmodel_head = nn.Sequential(
-            # nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
-            nn.Linear(576, 64),
-            nn.ReLU(),
-            nn.LayerNorm(64),
-        )
-        # self.maskmodel_decoder = nn.Sequential(
 
     def training_step(self, batch, batch_idx):
         utils.update_momentum(self.anchor_backbone, self.backbone, 0.996)
         utils.update_momentum(self.anchor_projection_head, self.projection_head, 0.996)
-        loss = 0
 
         views, _, _ = batch
         views = [view.to(self.device, non_blocking=True) for view in views]
@@ -1228,155 +1441,14 @@ class MSNModel(BenchmarkModule):
         targets_out = self.backbone(targets)
         targets_out = self.projection_head(targets_out)
         anchors_out = self.encode_masked(anchors)
-        anchors_out = self.anchor_projection_head(anchors_out)
         anchors_focal_out = self.encode_masked(anchors_focal)
-        anchors_focal_out = self.anchor_projection_head(anchors_focal_out)
         anchors_out = torch.cat([anchors_out, anchors_focal_out], dim=0)
-        if msn_aug_mode == 'v1':
-            sobel_anchors = filters.sobel(anchors)
-            sobel_anchors_out = self.encode_masked(sobel_anchors)
-            anchors_out = torch.cat([anchors_out, sobel_anchors_out], dim=0)
-        elif msn_aug_mode == 'v2':
-            out_anchors = []
-            for i in range(5):
-                # TODO: make this learnable?
-                # TODO: try other ftures of kornia
-                # TODO: try with random numbers for the kernel, but limited numbers and not too big and dont apply to image
-                # also try with bigger image in this case
-                kernel = torch.randn(3, 3, 3, 3).to(self.device)
-                test = F.conv2d(anchors, kernel, padding=1)
-                out_anchors.append(test)
-            out_anchors = torch.cat(out_anchors, dim=0)
-            out_anchors_out = self.encode_masked(out_anchors)
-            anchors_out = torch.cat([anchors_out, out_anchors_out], dim=0)
-        elif msn_aug_mode == 'v3':
-            # shuffle anchors on dimension 1
-            permutation = torch.randperm(anchors_out.size(1))
-            # Shuffle the tensor's second dimension according to the permutation
-            shuffled_tensor = anchors_out[:, permutation]
-            anchors_out = torch.cat([anchors_out, shuffled_tensor], dim=0)
-        elif msn_aug_mode == 'v4':
-            # embed targets_blocks, anchors_blocks, anchors_focal_blocks
-            _, targets_blocks = self.backbone.forward_blocks(targets)
-            _, anchors_blocks = self.encode_blocks(anchors)
-            _, anchors_focal_blocks = self.encode_blocks(anchors_focal)
 
-            targets_blocks = [self.projection_head(block) for block in targets_blocks]
-            anchors_blocks = [self.anchor_projection_head(block) for block in anchors_blocks]
-            anchors_focal_blocks = [self.anchor_projection_head(block) for block in anchors_focal_blocks]
-            targets_blocks = torch.cat(targets_blocks, dim=0)
-            anchors_blocks = torch.cat(anchors_blocks, dim=0)
-            anchors_focal_blocks = torch.cat(anchors_focal_blocks, dim=0)
-            anchors_blocks = torch.cat([anchors_blocks, anchors_focal_blocks], dim=0)
-            # anchors_out = torch.cat([anchors_out, targets_blocks, anchors_blocks], dim=0)
-        elif msn_aug_mode == 'v5':
-            _, targets_blocks = self.backbone.forward_blocks(targets)
-            _, anchors_blocks = self.encode_blocks(anchors)
-            _, anchors_focal_blocks = self.encode_blocks(anchors_focal)
-
-            targets_blocks = [self.projection_head(block) for block in targets_blocks]
-            anchors_blocks = [self.anchor_projection_head(block) for block in anchors_blocks]
-            anchors_focal_blocks = [self.anchor_projection_head(block) for block in anchors_focal_blocks]
-            idx = 0
-            for target_block, anchor_block, anchor_focal_block in zip(targets_blocks, anchors_blocks, anchors_focal_blocks):
-                anchors_block_out = torch.cat([anchor_block, anchor_focal_block], dim=0)
-                loss += self.criterion(anchors_block_out, target_block, self.prototypes.data) * 0.5 ** idx
-                idx += 1
-
-        elif msn_aug_mode == 'v6':
-            _, targets_blocks = self.backbone.forward_blocks(targets)
-            _, anchors_blocks = self.encode_blocks(anchors)
-            _, anchors_focal_blocks = self.encode_blocks(anchors_focal)
-
-            targets_blocks = [self.projection_head(block) for block in targets_blocks]
-            anchors_blocks = [self.anchor_projection_head(block) for block in anchors_blocks]
-            anchors_focal_blocks = [self.anchor_projection_head(block) for block in anchors_focal_blocks]
-            idx = 0
-            for target_block, anchor_block, anchor_focal_block in zip(targets_blocks, anchors_blocks, anchors_focal_blocks):
-                anchors_block_out = torch.cat([anchor_block, anchor_focal_block], dim=0)
-                loss += self.criterion(anchors_block_out, target_block, self.prototypes.data) * (1 - 0.5 ** idx)
-                idx += 1
-
-        elif msn_aug_mode == 'v7':
-            _, targets_blocks = self.backbone.forward_blocks(targets)
-            _, anchors_blocks = self.encode_blocks(anchors)
-            _, anchors_focal_blocks = self.encode_blocks(anchors_focal)
-
-            targets_blocks = [self.projection_head(block) for block in targets_blocks]
-            anchors_blocks = [self.anchor_projection_head(block) for block in anchors_blocks]
-            anchors_focal_blocks = [self.anchor_projection_head(block) for block in anchors_focal_blocks]
-            idx = 0
-            num_blocks = len(targets_blocks)
-            for target_block, anchor_block, anchor_focal_block in zip(targets_blocks, anchors_blocks, anchors_focal_blocks):
-                anchors_block_out = torch.cat([anchor_block, anchor_focal_block], dim=0)
-                loss += self.criterion(anchors_block_out, target_block, self.prototypes.data) * (idx+1/num_blocks)
-                idx += 1
-
-        elif msn_aug_mode == 'v8':
-            _, targets_blocks = self.backbone.forward_blocks(targets)
-            _, anchors_blocks = self.encode_blocks(anchors)
-            _, anchors_focal_blocks = self.encode_blocks(anchors_focal)
-
-            targets_blocks = [self.projection_head(block) for block in targets_blocks]
-            anchors_blocks = [self.anchor_projection_head(block) for block in anchors_blocks]
-            anchors_focal_blocks = [self.anchor_projection_head(block) for block in anchors_focal_blocks]
-            idx = 0
-            num_blocks = len(targets_blocks)
-            for target_block, anchor_block, anchor_focal_block in zip(targets_blocks, anchors_blocks, anchors_focal_blocks):
-                anchors_block_out = torch.cat([anchor_block, anchor_focal_block], dim=0)
-                for target_block_2, anchor_block_2, anchor_focal_block_2 in zip(targets_blocks, anchors_blocks, anchors_focal_blocks):
-                    if anchor_block_2 is anchor_block:
-                        continue
-                    anchors_block_out = torch.cat([anchors_block_out, anchor_block_2, anchor_focal_block_2], dim=0)
-                loss += self.criterion(anchors_block_out, target_block, self.prototypes.data) * (idx+1/num_blocks)
-                idx += 1
-
-        elif msn_aug_mode == 'v9':
-            _, targets_blocks = self.backbone.forward_blocks(targets)
-            _, anchors_blocks = self.encode_blocks(anchors)
-            _, anchors_focal_blocks = self.encode_blocks(anchors_focal)
-
-            targets_blocks = [self.projection_head(block) for block in targets_blocks]
-            anchors_blocks = [self.anchor_projection_head(block) for block in anchors_blocks]
-            anchors_focal_blocks = [self.anchor_projection_head(block) for block in anchors_focal_blocks]
-            idx = 0
-            num_blocks = len(targets_blocks)
-            for target_block, anchor_block, anchor_focal_block in zip(targets_blocks, anchors_blocks, anchors_focal_blocks):
-                anchors_block_out = torch.cat([anchor_block, anchor_focal_block], dim=0)
-                for target_block_2, anchor_block_2, anchor_focal_block_2 in zip(targets_blocks, anchors_blocks, anchors_focal_blocks):
-                    loss += self.criterion(anchors_block_out, target_block_2, self.prototypes.data) * (idx+1/num_blocks)
-                idx += 1
-
-        elif msn_aug_mode == 'v10':
-            # add noise to anchors
-            anchors_out = anchors_out + torch.randn_like(anchors_out) * 0.1
-
-        loss += self.criterion(anchors_out, targets_out, self.prototypes.data)
-        if msn_aug_mode == 'v4':
-            loss += self.criterion(anchors_blocks, targets_blocks, self.prototypes.data)
-        self.log('train_loss_ssl', loss)
+        loss = self.criterion(anchors_out, targets_out, self.prototypes.data)
+        self.log("train_loss_ssl", loss)
         return loss
 
-    def encode_masked(self, anchors, mask=None):
-        batch_size, _, _, width = anchors.shape
-        seq_length = (width // self.anchor_backbone.patch_size) ** 2
-        if mask is None:
-            idx_keep, _ = learned_token_mask(
-                size=(batch_size, seq_length),
-                mask_ratio=self.mask_ratio,
-                device=self.device,
-                mask = self.mask,
-            )
-        else:
-            idx_keep, _ = utils.random_token_mask(
-                size=(batch_size, seq_length),
-                mask_ratio=self.mask_ratio,
-                device=self.device,
-            )
-        out = self.anchor_backbone(anchors, idx_keep)
-        return self.anchor_projection_head(out)
-
-    def encode_blocks(self, anchors):
+    def encode_masked(self, anchors):
         batch_size, _, _, width = anchors.shape
         seq_length = (width // self.anchor_backbone.patch_size) ** 2
         idx_keep, _ = utils.random_token_mask(
@@ -1384,8 +1456,8 @@ class MSNModel(BenchmarkModule):
             mask_ratio=self.mask_ratio,
             device=self.device,
         )
-        out, blocks_out = self.anchor_backbone.forward_blocks(anchors, idx_keep)
-        return out, blocks_out
+        out = self.anchor_backbone(anchors, idx_keep)
+        return self.anchor_projection_head(out)
 
     def configure_optimizers(self):
         params = [
