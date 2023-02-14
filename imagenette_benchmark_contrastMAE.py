@@ -50,6 +50,11 @@ import copy
 import math
 import os
 
+import sys
+sys.path.append(os.path.join(os.getcwd(), 'lightly'))
+from lightly.utils import BenchmarkModule
+from lightly.models.modules import masked_autoencoder
+
 import time
 import lightly
 import numpy as np
@@ -63,7 +68,7 @@ from lightly.models.modules import heads
 
 from modified_items import MAEBackbone, MAEDecoder, learned_token_mask
 from lightly.models import utils
-from lightly.utils import BenchmarkModule
+
 from lightly.utils import scheduler
 from pytorch_lightning.loggers.wandb import WandbLogger
 from kornia import filters
@@ -73,6 +78,10 @@ from sklearn.cluster import KMeans
 import os
 from torchvision.models.vision_transformer import _vision_transformer
 import matplotlib.pyplot as plt
+# from transformers import CLIPProcessor, CLIPModel
+from PIL import Image
+# import display
+
 
 # wandb offline
 # os.environ['WANDB_MODE'] = 'offline'
@@ -86,6 +95,7 @@ memory_bank_size = 4096
 
 # set max_epochs to 800 for long run (takes around 10h on a single V100)
 max_epochs = 100
+val_epoch = 20
 knn_k = 200
 knn_t = 0.1
 # classes = 10000
@@ -98,10 +108,29 @@ msn_aug_mode = 'v0'
 byol_mode = 'v0'
 msn_masking_ratio = 0.15
 # dataset_name = 'cifar10'
-# dataset_name = 'imagenette'
-dataset_name = 'iNat2021mini'
+dataset_name = 'imagenette'
+# dataset_name = 'iNat2021mini'
+# dataset_name = 'medmnist'
 project_name = dataset_name + '_benchmark'
-log_model = False
+log_model = True
+
+
+#### linear probing args
+args = {}
+args["batch_size"] = 2048
+args["weight_decay"] = 0
+args["blr"] = 0.1
+args["lr"] = args["blr"] * args["batch_size"] / 256
+# args["lr"] = 0.1
+# args["epochs"] = 90
+args["epochs"] = 10
+args["clip_grad"] = 1.0
+args["accum_iter"] = 1
+args["model_dim"] = 512
+args["dataset"] = "cifar10"
+args["is_3d"] = False
+args["warmup_epochs"] = 10
+args["min_lr"] = 0.00001
 
 if dataset_name == 'cifar10' or dataset_name == 'imagenette':
     input_size = 128
@@ -129,9 +158,9 @@ n_runs = 1  # optional, increase to create multiple runs and report mean + std
 batch_size = 256
 lr_factor = batch_size / 256  # scales the learning rate linearly with batch size
 
-
 # use a GPU if available
 gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+# gpus = 0
 
 if distributed:
     distributed_backend = "ddp"
@@ -149,7 +178,6 @@ normalize_transform = torchvision.transforms.Normalize(
     std=lightly.data.collate.imagenet_normalize["std"],
 )
 
-
 # Use SimCLR augmentations
 if dataset_name == 'imagenette':
     collate_fn = lightly.data.SimCLRCollateFunction(
@@ -160,7 +188,7 @@ if dataset_name == 'imagenette':
         from torchvision.transforms import Normalize
         collate_fn = lightly.data.SimCLRCollateFunction(
             input_size=input_size,
-            normalize={'mean':(0.48145466, 0.4578275, 0.40821073), 'std':(0.26862954, 0.26130258, 0.27577711)},
+            normalize={'mean': (0.48145466, 0.4578275, 0.40821073), 'std': (0.26862954, 0.26130258, 0.27577711)},
         )
 
     # Multi crop augmentation for SwAV
@@ -228,14 +256,14 @@ elif dataset_name == 'cifar10':
         crop_min_scales=[0.2, 0.2],
         crop_max_scales=[1.0, 1.0],
     )
-elif dataset_name == 'iNat2021mini': # for now same augmentations as imagenette
+elif dataset_name == 'iNat2021mini':  # for now same augmentations as imagenette
     collate_fn = lightly.data.SimCLRCollateFunction(
         input_size=input_size,
     )
 
     # Multi crop augmentation for SwAV
     swav_collate_fn = lightly.data.SwaVCollateFunction(
-        crop_sizes=[224, 96], # from paper
+        crop_sizes=[224, 96],  # from paper
         crop_counts=[2, 6]  # 2 crops @ 128x128px and 6 crops @ 64x64px
     )
 
@@ -282,8 +310,8 @@ elif dataset_name == 'iNat2021mini':
 else:
     raise ValueError('Unknown dataset name')
 
-
 dataset_train_ssl = lightly.data.LightlyDataset(input_dir=path_to_train)
+dataset_train_probing = lightly.data.LightlyDataset(input_dir=path_to_train, transform=test_transforms)
 # we use test transformations for getting the feature for kNN on train data
 dataset_train_kNN = lightly.data.LightlyDataset(
     input_dir=path_to_train, transform=test_transforms
@@ -294,6 +322,20 @@ dataset_test = lightly.data.LightlyDataset(
 
 classes = len(dataset_test.dataset.classes)
 print('dataset_train_ssl length:', len(dataset_train_ssl))
+args["num_classes"] = classes
+
+def show_image(s):
+    s = s.detach().cpu().numpy().transpose(0, 2, 3, 1)[0]
+    # s = ((s+1.0)*127.5).clip(0,255).astype(np.uint8)
+    # s = ((s+.485)*0.225).clip(0,255).astype(np.uint8)
+    # s = ((s + .485) * 0.225*255).astype(np.uint8)
+    # s = ((s + .485) * 0.225 * 255)
+    # s = (s*255)
+    # reverse normalization
+    s = s * lightly.data.collate.imagenet_normalize["std"] + lightly.data.collate.imagenet_normalize["mean"]
+    s = s.clip(0, 255)
+    plt.imshow(s)
+    plt.show()
 
 def get_data_loaders(batch_size: int, model):
     """Helper method to create dataloaders for ssl, kNN train and kNN test
@@ -324,6 +366,14 @@ def get_data_loaders(batch_size: int, model):
         drop_last=True,
         num_workers=num_workers,
     )
+    dataloader_train_probing = torch.utils.data.DataLoader(
+        dataset_train_probing,
+        batch_size=batch_size,
+        shuffle=True,
+        # collate_fn=col_fn,
+        drop_last=True,
+        num_workers=num_workers,
+    )
 
     dataloader_train_kNN = torch.utils.data.DataLoader(
         dataset_train_kNN,
@@ -341,7 +391,41 @@ def get_data_loaders(batch_size: int, model):
         num_workers=num_workers,
     )
 
-    return dataloader_train_ssl, dataloader_train_kNN, dataloader_test
+    return dataloader_train_ssl, dataloader_train_kNN, dataloader_test, dataloader_train_probing
+
+
+import sys
+
+sys.path.append('./vqgan/taming_transformers')
+sys.path.append('./vqgan/')
+import taming_transformers as taming
+from taming.models import cond_transformer, vqgan
+from taming import modules
+from omegaconf import OmegaConf
+
+
+def load_vqgan_model(config_path, checkpoint_path):
+    config = OmegaConf.load(config_path)
+    if config.model.target == 'taming.models.vqgan.VQModel':
+        model = vqgan.VQModel(**config.model.params)
+        model.eval().requires_grad_(False)
+        model.init_from_ckpt(checkpoint_path)
+
+    elif config.model.target == 'taming.models.vqgan.GumbelVQ':
+        model = vqgan.GumbelVQ(**config.model.params)
+        model.eval().requires_grad_(False)
+        model.init_from_ckpt(checkpoint_path)
+
+    elif config.model.target == 'taming.models.cond_transformer.Net2NetTransformer':
+        parent_model = cond_transformer.Net2NetTransformer(**config.model.params)
+        parent_model.eval().requires_grad_(False)
+        parent_model.init_from_ckpt(checkpoint_path)
+        model = parent_model.first_stage_model
+    else:
+        raise ValueError(f'unknown model type: {config.model.target}')
+    del model.loss
+    return model
+
 
 class MocoModel(BenchmarkModule):
     def __init__(self, dataloader_kNN, num_classes):
@@ -413,8 +497,8 @@ class MocoModel(BenchmarkModule):
 
 
 class SimCLRModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes):
+        super().__init__(dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes)
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
         feature_dim = list(resnet.children())[-1].in_features
@@ -436,6 +520,77 @@ class SimCLRModel(BenchmarkModule):
         z0 = self.forward(x0)
         z1 = self.forward(x1)
         loss = self.criterion(z0, z1)
+        self.log("train_loss_ssl", loss)
+        return loss
+
+    def configure_optimizers(self):
+        optim = torch.optim.SGD(
+            self.parameters(), lr=6e-2 * lr_factor, momentum=0.9, weight_decay=5e-4
+        )
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
+        return [optim], [cosine_scheduler]
+
+
+def CLIP_embedding(frames, device, batch_size=64):
+    model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+    processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+    res = []
+    with torch.no_grad():
+        for i in range(0, len(frames), batch_size):
+            batch = frames[i: i + batch_size]
+            inputs = processor(
+                text=["a"] * len(batch),
+                images=batch,
+                return_tensors="pt",
+                padding=True,
+            ).to(device)
+            outputs = model(**inputs)
+            res.append(outputs["image_embeds"])
+            print("batch: ", i, " of ", len(frames))
+
+    frames = torch.cat(res, dim=0)
+
+    print("done")
+    return frames
+
+
+class SLIPModel(BenchmarkModule):
+    def __init__(self, dataloader_kNN, dataloader_train_ssl, dataloader_test, num_classes):
+        super().__init__(dataloader_kNN, dataloader_train_ssl, dataloader_test, num_classes)
+        # create a ResNet backbone and remove the classification head
+        resnet = torchvision.models.resnet18()
+        feature_dim = list(resnet.children())[-1].in_features
+        self.backbone = nn.Sequential(
+            *list(resnet.children())[:-1], nn.AdaptiveAvgPool2d(1)
+        )
+        self.projection_head = heads.SimCLRProjectionHead(feature_dim, feature_dim, 128)
+        self.criterion = lightly.loss.NTXentLoss(
+            gather_distributed=gather_distributed
+        )
+
+    def forward(self, x):
+        x = self.backbone(x).flatten(start_dim=1)
+        z = self.projection_head(x)
+        return z
+
+    def training_step(self, batch, batch_index):
+        (x0, x1), _, _ = batch
+
+        # clip part
+        clip_0 = CLIP_embedding(x0, self.device)
+        clip_1 = CLIP_embedding(x1, self.device)
+        loss_clip = self.criterion(clip_0, clip_1)
+
+        # simclr
+        z0 = self.forward(x0)
+        z1 = self.forward(x1)
+        loss_simclr = self.criterion(z0, z1)
+
+        loss = loss_clip + loss_simclr
+
+        self.log("train_loss_simclr", loss_simclr)
+        self.log("train_loss_clip", loss_clip)
         self.log("train_loss_ssl", loss)
         return loss
 
@@ -588,9 +743,9 @@ class BYOLModel(BenchmarkModule):
 
     def configure_optimizers(self):
         params = (
-            list(self.backbone.parameters())
-            + list(self.projection_head.parameters())
-            + list(self.prediction_head.parameters())
+                list(self.backbone.parameters())
+                + list(self.projection_head.parameters())
+                + list(self.prediction_head.parameters())
         )
         optim = torch.optim.SGD(
             params,
@@ -668,7 +823,6 @@ class SwaVModel(BenchmarkModule):
         return self.prototypes(x)
 
     def training_step(self, batch, batch_idx):
-
         # normalize the prototypes so they are on the unit sphere
         self.prototypes.normalize()
 
@@ -916,7 +1070,6 @@ class DCLW(BenchmarkModule):
 #         else:
 #             return 0.5 * (1. + math.cos(math.pi * (epoch - self.warmup_epochs) / (max_epochs - self.warmup_epochs)))
 
-from lightly.models.modules import masked_autoencoder
 class MAEModel(BenchmarkModule):
     def __init__(self, dataloader_kNN, num_classes):
         super().__init__(dataloader_kNN, num_classes)
@@ -937,7 +1090,7 @@ class MAEModel(BenchmarkModule):
             embed_input_dim=vit.hidden_dim,
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
-            out_dim=vit.patch_size**2 * 3,
+            out_dim=vit.patch_size ** 2 * 3,
             dropout=0,
             attention_dropout=0,
         )
@@ -965,6 +1118,97 @@ class MAEModel(BenchmarkModule):
 
     def training_step(self, batch, batch_idx):
         images, _, _ = batch
+
+        batch_size = images.shape[0]
+        idx_keep, idx_mask = utils.random_token_mask(
+            size=(batch_size, self.sequence_length),
+            mask_ratio=self.mask_ratio,
+            device=images.device,
+        )
+        x_encoded = self.forward_encoder(images, idx_keep)
+        x_pred = self.forward_decoder(x_encoded, idx_keep, idx_mask)
+
+        # get image patches for masked tokens
+        patches = utils.patchify(images, self.patch_size)
+        # must adjust idx_mask for missing class token
+        target = utils.get_at_index(patches, idx_mask - 1)
+
+        loss = self.criterion(x_pred, target)
+        self.log("train_loss_ssl", loss)
+        return loss
+
+    def configure_optimizers(self):
+        optim = torch.optim.AdamW(
+            self.parameters(),
+            lr=1.5e-4 * lr_factor,
+            weight_decay=0.05,
+            betas=(0.9, 0.95),
+        )
+        cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, max_epochs)
+        return [optim], [cosine_scheduler]
+
+class vqganMAEModel(BenchmarkModule):
+    def __init__(self, dataloader_kNN, num_classes):
+        super().__init__(dataloader_kNN, num_classes)
+
+        decoder_dim = 512
+        vit = torchvision.models.vit_b_32(pretrained=False)
+
+        self.warmup_epochs = 40 if max_epochs >= 800 else 20
+        self.mask_ratio = 0.75
+        self.patch_size = vit.patch_size
+        self.sequence_length = vit.seq_length
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
+        self.backbone = masked_autoencoder.MAEBackbone.from_vit(vit)
+        self.decoder = masked_autoencoder.MAEDecoder(
+            seq_length=vit.seq_length,
+            num_layers=1,
+            num_heads=16,
+            embed_input_dim=vit.hidden_dim,
+            hidden_dim=decoder_dim,
+            mlp_dim=decoder_dim * 4,
+            out_dim=vit.patch_size ** 2 * 3,
+            dropout=0,
+            attention_dropout=0,
+        )
+        self.criterion = nn.MSELoss()
+
+        self.model = load_vqgan_model(config_path='./vqgan/model.yaml', checkpoint_path='./vqgan/last.ckpt')
+        self.model.eval()
+
+    def forward_encoder(self, images, idx_keep=None):
+        return self.backbone.encode(images, idx_keep)
+
+    def forward_decoder(self, x_encoded, idx_keep, idx_mask):
+        # build decoder input
+        batch_size = x_encoded.shape[0]
+        x_decode = self.decoder.embed(x_encoded)
+        x_masked = utils.repeat_token(
+            self.mask_token, (batch_size, self.sequence_length)
+        )
+        x_masked = utils.set_at_index(x_masked, idx_keep, x_decode)
+
+        # decoder forward pass
+        x_decoded = self.decoder.decode(x_masked)
+
+        # predict pixel values for masked tokens
+        x_pred = utils.get_at_index(x_decoded, idx_mask)
+        x_pred = self.decoder.predict(x_pred)
+        return x_pred
+
+    def training_step(self, batch, batch_idx):
+        images, _, _ = batch
+
+        image = images[3]
+
+        c_code, c_indices = self.model.encoder(images)
+        c_code = c_code.detach().cpu().numpy()
+        c_indices = c_indices.detach().cpu().numpy()
+
+        # c_code = c_code[3]
+        # c_indices = c_indices[3]
+        # c_code = c_code.reshape(1, -1)
+        # c_indices = c_indices.reshape(1, -1)
 
         batch_size = images.shape[0]
         idx_keep, idx_mask = utils.random_token_mask(
@@ -1569,9 +1813,9 @@ class SMoGModel(BenchmarkModule):
 
     def configure_optimizers(self):
         params = (
-            list(self.backbone.parameters())
-            + list(self.projection_head.parameters())
-            + list(self.prediction_head.parameters())
+                list(self.backbone.parameters())
+                + list(self.projection_head.parameters())
+                + list(self.prediction_head.parameters())
         )
         optim = torch.optim.SGD(
             params,
@@ -1599,7 +1843,7 @@ class SimMIMModel(BenchmarkModule):
         self.backbone = MAEBackbone.from_vit(vit)
 
         # the decoder is a simple linear layer
-        self.decoder = nn.Linear(vit.hidden_dim, vit.patch_size**2 * 3)
+        self.decoder = nn.Linear(vit.hidden_dim, vit.patch_size ** 2 * 3)
 
         # L1 loss as paper suggestion
         self.criterion = nn.L1Loss()
@@ -1815,9 +2059,10 @@ class TiCoModel(BenchmarkModule):
 # ]
 
 models = [
-    # SimCLRModel,
+    SimCLRModel,
     # DINOModel,
-    MAEModel,
+    # MAEModel,
+    # vqganMAEModel,
     # SwaVModel,
     # BYOLModel,
     # MSNModel,
@@ -1849,7 +2094,8 @@ for BenchmarkModel in models:
 
             if 'MSN' in model_name:
                 wandb_logger = WandbLogger(
-                    project=project_name, entity="maggu", name=f"{model_name}--_{msn_aug_mode}_224_{masking_ratio}_training--{seed}", log_model=log_model
+                    project=project_name, entity="maggu",
+                    name=f"{model_name}--_{msn_aug_mode}_224_{masking_ratio}_training--{seed}", log_model=log_model
                 )
             else:
                 wandb_logger = WandbLogger(
@@ -1858,14 +2104,16 @@ for BenchmarkModel in models:
 
             pl.seed_everything(seed)
 
-            dataloader_train_ssl, dataloader_train_kNN, dataloader_test = get_data_loaders(
+            dataloader_train_ssl, dataloader_train_kNN, dataloader_test, dataloader_train_probing = get_data_loaders(
                 batch_size=batch_size,
                 model=BenchmarkModel,
             )
             if 'contrast' in model_name:
-                benchmark_model = BenchmarkModel(dataloader_train_kNN, classes, contrastive_type=contrastive_type)
+                benchmark_model = BenchmarkModel(dataloader_train_kNN, dataloader_train_probing, dataloader_test, args=args,
+                                                 num_classes=classes, contrastive_type=contrastive_type)
             else:
-                benchmark_model = BenchmarkModel(dataloader_train_kNN, classes)
+                benchmark_model = BenchmarkModel(dataloader_train_kNN, dataloader_train_probing, dataloader_test, args=args,
+                                                 num_classes=classes)
 
             # Save logs to: {CWD}/benchmark_logs/cifar10/{experiment_version}/{model_name}/
             # If multiple runs are specified a subdirectory for each run is created.
@@ -1901,6 +2149,9 @@ for BenchmarkModel in models:
                 strategy=distributed_backend,
                 sync_batchnorm=sync_batchnorm,
                 logger=wandb_logger,
+                check_val_every_n_epoch=val_epoch,
+                # accelerator="cpu",
+                # num_processes=0,
                 # callbacks=[checkpoint_callback]
             )
             start = time.time()
@@ -1909,12 +2160,6 @@ for BenchmarkModel in models:
                 train_dataloaders=dataloader_train_ssl,
                 val_dataloaders=dataloader_test
             )
-
-            # do linear probing
-            #TODO
-
-            # do fine tuning
-            #TODO
 
             end = time.time()
             run = {
@@ -1941,54 +2186,55 @@ for BenchmarkModel in models:
 
         bench_results[model_name] = runs
 
-#  print results table
-header = (
-    f"| {'Model':<13} | {'Batch Size':>10} | {'Epochs':>6} "
-    f"| {'KNN Test Accuracy':>18} | {'Time':>10} | {'Peak GPU Usage':>14} |"
-)
-print('-' * len(header))
-print(header)
-print('-' * len(header))
-idx = 0
-for model, results in bench_results.items():
-    wandb.init(
-        project=project_name,
-        entity="maggu",
-        # settings=wandb.Settings(start_method="thread"),
-        save_code=False,
-        name=f"{model}--results",
+
+if False:
+    #  print results table
+    header = (
+        f"| {'Model':<13} | {'Batch Size':>10} | {'Epochs':>6} "
+        f"| {'KNN Test Accuracy':>18} | {'Time':>10} | {'Peak GPU Usage':>14} |"
     )
+    print('-' * len(header))
+    print(header)
+    print('-' * len(header))
+    idx = 0
+    for model, results in bench_results.items():
+        wandb.init(
+            project=project_name,
+            entity="maggu",
+            # settings=wandb.Settings(start_method="thread"),
+            save_code=False,
+            name=f"{model}--results",
+        )
 
-    idx += 1
-    if idx == 5:
-        break
-    runtime = np.array([result['runtime'] for result in results])
-    runtime = runtime.mean() / 60  # convert to min
-    accuracy = np.array([result['max_accuracy'] for result in results])
-    gpu_memory_usage = np.array([result['gpu_memory_usage'] for result in results])
-    gpu_memory_usage = gpu_memory_usage.max() / (1024 ** 3)  #  convert to gbyte
+        idx += 1
+        if idx == 5:
+            break
+        runtime = np.array([result['runtime'] for result in results])
+        runtime = runtime.mean() / 60  # convert to min
+        accuracy = np.array([result['max_accuracy'] for result in results])
+        gpu_memory_usage = np.array([result['gpu_memory_usage'] for result in results])
+        gpu_memory_usage = gpu_memory_usage.max() / (1024 ** 3)  #  convert to gbyte
 
-    if len(accuracy) > 1:
-        accuracy_msg = f"{accuracy.mean():>8.3f} +- {accuracy.std():>4.3f}"
-    else:
-        accuracy_msg = f"{accuracy.mean():>18.3f}"
+        if len(accuracy) > 1:
+            accuracy_msg = f"{accuracy.mean():>8.3f} +- {accuracy.std():>4.3f}"
+        else:
+            accuracy_msg = f"{accuracy.mean():>18.3f}"
 
-    print(
-        f"| {model:<13} | {batch_size:>10} | {max_epochs:>6} "
-        f"| {accuracy_msg} | {runtime:>6.1f} Min "
-        f"| {gpu_memory_usage:>8.1f} GByte |",
-        flush=True
-    )
+        print(
+            f"| {model:<13} | {batch_size:>10} | {max_epochs:>6} "
+            f"| {accuracy_msg} | {runtime:>6.1f} Min "
+            f"| {gpu_memory_usage:>8.1f} GByte |",
+            flush=True
+        )
 
-    wandb.log({
-        'model': model,
-        'batch_size': batch_size,
-        'epochs': max_epochs,
-        'max_accuracy': accuracy.mean(),
-        'runtime': runtime,
-        'gpu_memory_usage': gpu_memory_usage,
-    })
-    wandb.finish()
-    time.sleep(6)
-print('-' * len(header))
-
+        wandb.log({
+            'model': model,
+            'batch_size': batch_size,
+            'epochs': max_epochs,
+            'max_accuracy': accuracy.mean(),
+            'runtime': runtime,
+            'gpu_memory_usage': gpu_memory_usage,
+        })
+        wandb.finish()
+        time.sleep(6)
+    print('-' * len(header))

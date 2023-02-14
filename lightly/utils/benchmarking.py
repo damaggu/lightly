@@ -9,17 +9,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pytorch_lightning import LightningModule
 from torch.utils.data import DataLoader
+from fb_MAE.engine_finetune import train_one_epoch, evaluate
+from pl_bolts.optimizers.lars import LARS
+from torch._six import inf
 
 # code for kNN prediction from here:
 # https://colab.research.google.com/github/facebookresearch/moco/blob/colab-notebook/colab/moco_cifar10_demo.ipynb
-
+# linear probing code adapted from FB research
 
 def knn_predict(feature: torch.Tensor,
                 feature_bank: torch.Tensor,
-                feature_labels: torch.Tensor, 
+                feature_labels: torch.Tensor,
                 num_classes: int,
-                knn_k: int=200,
-                knn_t: float=0.1) -> torch.Tensor:
+                knn_k: int = 200,
+                knn_t: float = 0.1) -> torch.Tensor:
     """Run kNN predictions on features based on a feature bank
 
     This method is commonly used to monitor performance of self-supervised
@@ -78,6 +81,155 @@ def knn_predict(feature: torch.Tensor,
         0), -1, num_classes) * sim_weight.unsqueeze(dim=-1), dim=1)
     pred_labels = pred_scores.argsort(dim=-1, descending=True)
     return pred_labels
+
+
+def get_grad_norm_(parameters, norm_type: float = 2.0) -> torch.Tensor:
+    if isinstance(parameters, torch.Tensor):
+        parameters = [parameters]
+    parameters = [p for p in parameters if p.grad is not None]
+    norm_type = float(norm_type)
+    if len(parameters) == 0:
+        return torch.tensor(0.)
+    device = parameters[0].grad.device
+    if norm_type == inf:
+        total_norm = max(p.grad.detach().abs().max().to(device) for p in parameters)
+    else:
+        total_norm = torch.norm(torch.stack([torch.norm(p.grad.detach(), norm_type).to(device) for p in parameters]),
+                                norm_type)
+    return total_norm
+
+
+class NativeScalerWithGradNormCount:
+    state_dict_key = "amp_scaler"
+
+    def __init__(self):
+        self._scaler = torch.cuda.amp.GradScaler()
+
+    def __call__(self, loss, optimizer, clip_grad=None, parameters=None, create_graph=False, update_grad=True):
+        self._scaler.scale(loss).backward(create_graph=create_graph)
+        if update_grad:
+            if clip_grad is not None:
+                assert parameters is not None
+                self._scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
+                norm = torch.nn.utils.clip_grad_norm_(parameters, clip_grad)
+            else:
+                self._scaler.unscale_(optimizer)
+                norm = get_grad_norm_(parameters)
+            self._scaler.step(optimizer)
+            self._scaler.update()
+        else:
+            norm = None
+        return norm
+
+    def state_dict(self):
+        return self._scaler.state_dict()
+
+    def load_state_dict(self, state_dict):
+        self._scaler.load_state_dict(state_dict)
+
+
+def evaluate_model_linear_probing(
+        model,
+        data_loader_train,
+        data_loader_val,
+        device,
+        args,
+        train_transform=None,
+        val_transform=None,
+):
+    linear_layer = nn.Linear(args["model_dim"], args["num_classes"], bias=True)
+    linear_layer.weight.data.normal_(mean=0.0, std=0.01)
+    linear_layer.bias.data.zero_()
+
+    model.head = nn.Sequential(nn.Flatten(start_dim=1), torch.nn.BatchNorm1d(args["model_dim"], affine=False, eps=1e-6), linear_layer)
+
+    for _, p in model.named_parameters():
+        p.requires_grad = False
+    for _, p in model.head.named_parameters():
+        p.requires_grad = True
+
+    model.to(device)
+
+    model_without_ddp = model
+    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    # print("Model = %s" % str(model_without_ddp))
+    # print("number of params (M): %.2f" % (n_parameters / 1.0e6))
+    print("number of params: %.2f" % (n_parameters))
+
+    # TODO: needed?
+    # eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
+    eff_batch_size = args["batch_size"]
+
+    if args["lr"] is None:  # only base_lr is specified
+        args["lr"] = args["blr"] * eff_batch_size / 256
+
+    print("base lr: %.2e" % (args["lr"] * 256 / eff_batch_size))
+    print("actual lr: %.2e" % args["lr"])
+
+    print("accumulate grad iterations: %d" % args["accum_iter"])
+    print("effective batch size: %d" % eff_batch_size)
+
+    # if args.distributed:
+    #     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=list(range(torch.cuda.device_count())))
+    #     model_without_ddp = model.module
+
+    optimizer = LARS(
+        model.head.parameters(),
+        lr=args['lr'],
+        weight_decay=args['weight_decay'],
+        # momentum=0.9,
+    )
+
+    print(optimizer)
+    loss_scaler = NativeScalerWithGradNormCount()
+
+    criterion = torch.nn.CrossEntropyLoss()
+
+    print("criterion = %s" % str(criterion))
+
+    # TODO: check if needed
+    # misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
+
+    test_stats = evaluate(data_loader_val, model, device, args, transform=val_transform)
+    print(
+        f"Accuracy of the network on the {len(data_loader_val)} test images: {test_stats['acc1']:.1f}%"
+    )
+
+    print(f"Start training for {args['epochs']} epochs")
+    # start_time = time.time()
+    max_accuracy = 0.0
+    for epoch in range(0, args["epochs"]):
+        # if args.distributed:
+        #     data_loader_train.sampler.set_epoch(epoch)
+        train_stats = train_one_epoch(
+            model,
+            criterion,
+            data_loader_train,
+            optimizer,
+            device,
+            epoch,
+            loss_scaler,
+            args["clip_grad"],
+            transform=train_transform,
+            # mixup_fn,
+            # log_writer=log_writer,
+            args=args,
+        )
+        # if args.output_dir:
+        #     misc.save_model(
+        #         args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
+        #         loss_scaler=loss_scaler, epoch=epoch)
+
+        test_stats = evaluate(data_loader_val, model, device, args=args, transform=val_transform)
+        print(
+            f"Accuracy of the network on the {len(data_loader_val)} test images: {test_stats['acc1']:.1f}%"
+        )
+
+    for _, p in model.named_parameters():
+        p.requires_grad = True
+
+    return max_accuracy, test_stats["acc1"], test_stats["acc5"], test_stats["loss"]
 
 
 class BenchmarkModule(LightningModule):
@@ -150,13 +302,19 @@ class BenchmarkModule(LightningModule):
 
     def __init__(self,
                  dataloader_kNN: DataLoader,
+                 dataloader_train_ssl: DataLoader,
+                 dataloader_test: DataLoader,
+                 args: dict,
                  num_classes: int,
-                 knn_k: int=200,
-                 knn_t: float=0.1):
+                 knn_k: int = 200,
+                 knn_t: float = 0.1):
         super().__init__()
         self.backbone = nn.Module()
         self.max_accuracy = 0.0
         self.dataloader_kNN = dataloader_kNN
+        self.dataloader_train_ssl = dataloader_train_ssl
+        self.dataloader_test = dataloader_test
+        self.args = args
         self.num_classes = num_classes
         self.knn_k = knn_k
         self.knn_t = knn_t
@@ -210,7 +368,7 @@ class BenchmarkModule(LightningModule):
             for (num, top1) in outputs:
                 total_num += num[0]
                 total_top1 += top1
-             
+
             if dist.is_initialized() and dist.get_world_size() > 1:
                 dist.all_reduce(total_num)
                 dist.all_reduce(total_top1)
@@ -219,3 +377,14 @@ class BenchmarkModule(LightningModule):
             if acc > self.max_accuracy:
                 self.max_accuracy = acc
             self.log('kNN_accuracy', acc * 100.0, prog_bar=True)
+            print(f"Current kNN accuracy: {acc * 100.0:.2f} %")
+            # also perform linear probing
+            # with torch.no_grad():
+
+            torch.set_grad_enabled(True)
+            max_accuracy, acc1, _, _ = evaluate_model_linear_probing(self.backbone, self.dataloader_train_ssl, self.dataloader_test, device, self.args)
+            torch.set_grad_enabled(False)
+            self.log('linear_probing_accuracy1', acc1, prog_bar=True)
+            print(f"Current linear probing accuracy1: {acc1:.2f} %")
+            # remove model.head from the backbone
+            del self.backbone.head
