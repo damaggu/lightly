@@ -94,12 +94,20 @@ num_workers = 12
 memory_bank_size = 4096
 
 dist = False
+eli = False
 # set max_epochs to 800 for long run (takes around 10h on a single V100)
-max_epochs = 100
-val_epoch = 20
+if eli:
+    max_epochs = 1000
+    batch_size = 4096
+else:
+    max_epochs = 200
+    batch_size = 256
+
+lr_factor = batch_size / 256  # scales the learning rate linearly with batch size
+val_epoch = 50
 knn_k = 200
 knn_t = 0.1
-# classes = 10000
+n_runs = 1  # optional, increase to create multiple runs and report mean + std
 
 masking_ratio = 0.75
 patch_size = 16
@@ -155,9 +163,6 @@ sync_batchnorm = dist
 gather_distributed = dist
 
 # benchmark
-n_runs = 1  # optional, increase to create multiple runs and report mean + std
-batch_size = 256
-lr_factor = batch_size / 256  # scales the learning rate linearly with batch size
 
 # use a GPU if available
 gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
@@ -260,6 +265,7 @@ elif dataset_name == 'cifar10':
 elif dataset_name == 'iNat2021mini':  # for now same augmentations as imagenette
     collate_fn = lightly.data.SimCLRCollateFunction(
         input_size=input_size,
+        gaussian_blur=0.0, # from eli's paper
     )
 
     # Multi crop augmentation for SwAV
@@ -525,10 +531,17 @@ class SimCLRModel(BenchmarkModule):
         return loss
 
     def configure_optimizers(self):
+        lr = 6e-2
+        if eli:
+            lr = 0.075
         optim = torch.optim.SGD(
-            self.parameters(), lr=6e-2 * lr_factor, momentum=0.9, weight_decay=5e-4
+            self.parameters(), lr=lr * lr_factor, momentum=0.9, weight_decay=5e-4
         )
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
+        if eli:
+            self.warmup_epochs = 10
+            cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, max_epochs)
+        else:
+            cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
         return [optim], [cosine_scheduler]
 
 
