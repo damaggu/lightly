@@ -78,7 +78,7 @@ from sklearn.cluster import KMeans
 import os
 from torchvision.models.vision_transformer import _vision_transformer
 import matplotlib.pyplot as plt
-# from transformers import CLIPProcessor, CLIPModel
+from transformers import CLIPProcessor, CLIPModel
 from PIL import Image
 # import display
 
@@ -556,8 +556,8 @@ def CLIP_embedding(frames, device, batch_size=64):
 
 
 class SLIPModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, dataloader_train_ssl, dataloader_test, num_classes):
-        super().__init__(dataloader_kNN, dataloader_train_ssl, dataloader_test, num_classes)
+    def __init__(self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes):
+        super().__init__(dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes)
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
         feature_dim = list(resnet.children())[-1].in_features
