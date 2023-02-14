@@ -394,14 +394,14 @@ def get_data_loaders(batch_size: int, model):
     return dataloader_train_ssl, dataloader_train_kNN, dataloader_test, dataloader_train_probing
 
 
-import sys
-
-sys.path.append('./vqgan/taming_transformers')
-sys.path.append('./vqgan/')
-import taming_transformers as taming
-from taming.models import cond_transformer, vqgan
-from taming import modules
-from omegaconf import OmegaConf
+# import sys
+#
+# sys.path.append('./vqgan/taming_transformers')
+# sys.path.append('./vqgan/')
+# import taming_transformers as taming
+# from taming.models import cond_transformer, vqgan
+# from taming import modules
+# from omegaconf import OmegaConf
 
 
 def load_vqgan_model(config_path, checkpoint_path):
