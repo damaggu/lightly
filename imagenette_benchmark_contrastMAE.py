@@ -93,6 +93,7 @@ logs_root_dir = os.path.join(os.getcwd(), 'benchmark_logs')
 num_workers = 12
 memory_bank_size = 4096
 
+dist = False
 # set max_epochs to 800 for long run (takes around 10h on a single V100)
 max_epochs = 100
 val_epoch = 20
@@ -140,18 +141,18 @@ else:
     raise ValueError('Invalid dataset name')
 
 # Set to True to enable Distributed Data Parallel training.
-distributed = False
+distributed = dist
 
 # Set to True to enable Synchronized Batch Norm (requires distributed=True).
 # If enabled the batch norm is calculated over all gpus, otherwise the batch
 # norm is only calculated from samples on the same gpu.
-sync_batchnorm = False
+sync_batchnorm = dist
 
 # Set to True to gather features from all gpus before calculating
 # the loss (requires distributed=True).
 # If enabled then the loss on every gpu is calculated with features from all
 # gpus, otherwise only features from the same gpu are used.
-gather_distributed = False
+gather_distributed = dist
 
 # benchmark
 n_runs = 1  # optional, increase to create multiple runs and report mean + std
