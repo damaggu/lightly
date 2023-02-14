@@ -555,7 +555,7 @@ def CLIP_embedding(frames, device, batch_size=64):
             batch = frames[i: i + batch_size]
             inputs = processor(
                 text=["a"] * len(batch),
-                images=batch,
+                images=[a for a in batch],
                 return_tensors="pt",
                 padding=True,
             ).to(device)
@@ -2073,7 +2073,8 @@ class TiCoModel(BenchmarkModule):
 # ]
 
 models = [
-    SimCLRModel,
+    SLIPModel,
+    # SimCLRModel,
     # DINOModel,
     # MAEModel,
     # vqganMAEModel,
