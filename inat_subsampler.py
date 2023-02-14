@@ -3,6 +3,8 @@ import random
 import shutil
 
 random.seed(0)
+train_subset_size = 5
+test_subset_size = 5
 
 path_to_train = './datasets/inat/train_mini/'
 path_to_test = './datasets/inat/val/'
@@ -28,5 +30,5 @@ def copy_random_subset(src_dir, dst_dir, subset_size):
             dst_file = src_file.replace(src_dir, dst_dir)
             shutil.copy2(src_file, dst_file)
 
-copy_random_subset(path_to_train, path_to_train_subset, 5)
-copy_random_subset(path_to_test, path_to_test_subset, 5)
+copy_random_subset(path_to_train, path_to_train_subset, train_subset_size)
+copy_random_subset(path_to_test, path_to_test_subset, test_subset_size)
