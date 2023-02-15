@@ -127,6 +127,7 @@ log_model = True
 
 #### linear probing args
 args = {}
+args['do_probing'] = False
 args["batch_size"] = 2048
 args["weight_decay"] = 0
 args["blr"] = 0.1
