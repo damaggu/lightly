@@ -387,7 +387,7 @@ class BenchmarkModule(LightningModule):
             # also perform linear probing
             # with torch.no_grad():
 
-            if args['do_probing']:
+            if self.args['do_probing']:
                 torch.set_grad_enabled(True)
                 max_accuracy, acc1, _, _ = evaluate_model_linear_probing(self.backbone, self.dataloader_train_ssl, self.dataloader_test, device, self.args, addition_model=self)
                 torch.set_grad_enabled(False)
