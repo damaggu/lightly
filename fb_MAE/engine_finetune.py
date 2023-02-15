@@ -29,7 +29,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     device: torch.device, epoch: int, loss_scaler, max_norm: float = 0,
                     transform = None,
                     mixup_fn: Optional[Mixup] = None, log_writer=None,
-                    args=None):
+                    args=None, addition_model=None):
     model.train(True)
     metric_logger = misc.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', misc.SmoothedValue(window_size=1, fmt='{value:.6f}'))
@@ -81,6 +81,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             samples, targets = mixup_fn(samples, targets)
 
         with torch.cuda.amp.autocast():
+            if addition_model:
+                samples = addition_model.images_to_codes(samples)
             outputs = model(samples)
             loss = criterion(outputs, targets)
 
@@ -127,7 +129,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 
 @torch.no_grad()
-def evaluate(data_loader, model, device, args, transform=None, verbose=False):
+def evaluate(data_loader, model, device, args, transform=None, addition_model=None, verbose=False):
     criterion = torch.nn.CrossEntropyLoss()
 
     metric_logger = misc.MetricLogger(delimiter="  ")
@@ -164,6 +166,8 @@ def evaluate(data_loader, model, device, args, transform=None, verbose=False):
 
         # compute output
         with torch.cuda.amp.autocast():
+            if addition_model:
+                images = addition_model.images_to_codes(images)
             output = model(images)
             loss = criterion(output, target)
 

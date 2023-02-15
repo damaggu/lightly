@@ -103,7 +103,7 @@ if eli:
 else:
     max_epochs = 200
     batch_size = 256
-    val_epoch = 20
+    val_epoch = 1
 
 lr_factor = batch_size / 256  # scales the learning rate linearly with batch size
 knn_k = 200

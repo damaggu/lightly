@@ -136,6 +136,7 @@ def evaluate_model_linear_probing(
         args,
         train_transform=None,
         val_transform=None,
+        addition_model=None,
 ):
     linear_layer = nn.Linear(args["model_dim"], args["num_classes"], bias=True)
     linear_layer.weight.data.normal_(mean=0.0, std=0.01)
@@ -191,7 +192,7 @@ def evaluate_model_linear_probing(
     # TODO: check if needed
     # misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
 
-    test_stats = evaluate(data_loader_val, model, device, args, transform=val_transform)
+    test_stats = evaluate(data_loader_val, model, device, args, transform=val_transform, addition_model=addition_model)
     print(
         f"Accuracy of the network on the {len(data_loader_val)} test images: {test_stats['acc1']:.1f}%"
     )
@@ -215,6 +216,7 @@ def evaluate_model_linear_probing(
             # mixup_fn,
             # log_writer=log_writer,
             args=args,
+            addition_model=addition_model,
         )
         # if args.output_dir:
         #     misc.save_model(
@@ -348,6 +350,8 @@ class BenchmarkModule(LightningModule):
         # we can only do kNN predictions once we have a feature bank
         if hasattr(self, 'feature_bank') and hasattr(self, 'targets_bank'):
             images, targets, _ = batch
+            if self._get_name() == 'vqganMAEModel':
+                images = self.images_to_codes(images)
             feature = self.backbone(images).squeeze()
             feature = F.normalize(feature, dim=1)
             pred_labels = knn_predict(
@@ -384,7 +388,7 @@ class BenchmarkModule(LightningModule):
             # with torch.no_grad():
 
             torch.set_grad_enabled(True)
-            max_accuracy, acc1, _, _ = evaluate_model_linear_probing(self.backbone, self.dataloader_train_ssl, self.dataloader_test, device, self.args)
+            max_accuracy, acc1, _, _ = evaluate_model_linear_probing(self.backbone, self.dataloader_train_ssl, self.dataloader_test, device, self.args, addition_model=self)
             torch.set_grad_enabled(False)
             self.log('linear_probing_accuracy1', acc1, prog_bar=True)
             print(f"Current linear probing accuracy1: {acc1:.2f} %")
