@@ -303,11 +303,185 @@ class MAEBackbone(vision_transformer.VisionTransformer):
             containing the patch tokens.
         """
         x = self.conv_proj(images)
-        tokens =  x.flatten(2).transpose(1, 2)
+        tokens = x.flatten(2).transpose(1, 2)
         if prepend_class_token:
             tokens = utils.prepend_class_token(tokens, self.class_token)
         return tokens
 
+class vqganMAEBackbone(vision_transformer.VisionTransformer):
+    """Backbone for the Masked Autoencoder model [0].
+
+    Converts images into patches and encodes them. Code inspired by [1].
+    Note that this implementation uses a learned positional embedding while [0]
+    uses a fixed positional embedding.
+
+    - [0]: Masked Autoencoder, 2021, https://arxiv.org/abs/2111.06377
+    - [1]: https://github.com/facebookresearch/mae
+    - [2]: Early Convolutions Help Transformers See Better, 2021, https://arxiv.org/abs/2106.14881.
+
+    Attributes:
+        image_size:
+            Input image size.
+        patch_size:
+            Width and height of the image patches. image_size must be a multiple
+            of patch_size.
+        num_layers:
+            Number of transformer blocks.
+        num_heads:
+            Number of attention heads.
+        hidden_dim:
+            Dimension of the input and output tokens.
+        mlp_dim:
+            Dimension of the MLP in the transformer block.
+        dropout:
+            Percentage of elements set to zero after the MLP in the transformer.
+        attention_dropout:
+            Percentage of elements set to zero after the attention head.
+        num_classes:
+            Number of classes for the classification head. Currently not used.
+        representation_size:
+            If specified, an additional linear layer is added before the
+            classification head to change the token dimension from hidden_dim
+            to representation_size. Currently not used.
+        norm_layer:
+            Callable that creates a normalization layer.
+        conv_stem_configs:
+            If specified, a convolutional stem is added at the beggining of the
+            network following [2]. Not used in the original Masked Autoencoder
+            paper [0].
+
+    """
+
+    def __init__(
+            self,
+            image_size: int,
+            patch_size: int,
+            num_layers: int,
+            num_heads: int,
+            hidden_dim: int,
+            mlp_dim: int,
+            dropout: float = 0,
+            attention_dropout: float = 0,
+            num_classes: int = 1000,
+            representation_size: Optional[int] = None,
+            norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+            conv_stem_configs: Optional[List[ConvStemConfig]] = None
+    ):
+        super().__init__(
+            image_size=image_size,
+            patch_size=patch_size,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            hidden_dim=hidden_dim,
+            mlp_dim=mlp_dim,
+            dropout=dropout,
+            attention_dropout=attention_dropout,
+            num_classes=num_classes,
+            representation_size=representation_size,
+            norm_layer=norm_layer,
+            conv_stem_configs=conv_stem_configs,
+        )
+        self.encoder = MAEEncoder(
+            seq_length=self.seq_length,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            hidden_dim=hidden_dim,
+            mlp_dim=mlp_dim,
+            dropout=dropout,
+            attention_dropout=attention_dropout,
+            norm_layer=norm_layer,
+        )
+
+    @classmethod
+    def from_vit(cls, vit: vision_transformer.VisionTransformer) -> MAEBackbone:
+        """Creates a MAEBackbone from a torchvision ViT model."""
+        # Create a new instance with dummy values as they will be overwritten
+        # by the copied vit_encoder attributes
+        backbone = cls(
+            image_size=vit.image_size,
+            patch_size=vit.patch_size,
+            num_layers=1,
+            num_heads=1,
+            hidden_dim=vit.hidden_dim,
+            mlp_dim=vit.mlp_dim,
+            dropout=vit.dropout,
+            attention_dropout=vit.attention_dropout,
+            num_classes=vit.num_classes,
+            representation_size=vit.representation_size,
+            norm_layer=vit.norm_layer,
+        )
+        backbone.conv_proj = vit.conv_proj
+        backbone.class_token = vit.class_token
+        backbone.seq_length = vit.seq_length
+        backbone.heads = vit.heads
+        backbone.encoder = MAEEncoder.from_vit_encoder(vit.encoder)
+        return backbone
+
+    def forward(
+            self,
+            images: torch.Tensor,
+            idx_keep: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """Returns encoded class tokens from a batch of images.
+
+        Args:
+            images:
+                Tensor with shape (batch_size, channels, image_size, image_size).
+            idx_keep:
+                Tensor with shape (batch_size, num_tokens_to_keep) where each
+                entry is an index of the token to keep in the respective batch.
+                If specified, only the indexed tokens will be passed to the
+                encoder.
+
+        Returns:
+            Tensor with shape (batch_size, hidden_dim) containing the
+            encoded class token for every image.
+
+        """
+        out = self.encode(images, idx_keep)
+        class_token = out[:, 0]
+        return class_token
+
+    def encode(
+            self,
+            images: torch.Tensor,
+            idx_keep: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """Returns encoded class and patch tokens from images.
+
+        Args:
+            images:
+                Tensor with shape (batch_size, channels, image_size, image_size).
+            idx_keep:
+                Tensor with shape (batch_size, num_tokens_to_keep) where each
+                entry is an index of the token to keep in the respective batch.
+                If specified, only the indexed tokens will be passed to the
+                encoder.
+
+        Returns:
+            Tensor with shape (batch_size, sequence_length, hidden_dim)
+            containing the encoded class and patch tokens for every image.
+
+        """
+        out = self.images_to_tokens(images, prepend_class_token=True)
+        return self.encoder(out, idx_keep)
+
+
+    def images_to_tokens(self, images: torch.Tensor, prepend_class_token: bool) -> torch.Tensor:
+        """Converts images into patch tokens.
+
+        Args:
+            images:
+                Tensor with shape (batch_size, channels, image_size, image_size).
+
+        Returns:
+            Tensor with shape (batch_size, sequence_length - 1, hidden_dim)
+            containing the patch tokens.
+        """
+        tokens = images.flatten(2).transpose(1, 2)
+        if prepend_class_token:
+            tokens = utils.prepend_class_token(tokens, self.class_token)
+        return tokens
 
 class MAEDecoder(vision_transformer.Encoder):
     """Decoder for the Masked Autoencoder model [0].

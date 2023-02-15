@@ -99,12 +99,13 @@ eli = False
 if eli:
     max_epochs = 1000
     batch_size = 4096
+    val_epoch = 50
 else:
     max_epochs = 200
     batch_size = 256
+    val_epoch = 20
 
 lr_factor = batch_size / 256  # scales the learning rate linearly with batch size
-val_epoch = 50
 knn_k = 200
 knn_t = 0.1
 n_runs = 1  # optional, increase to create multiple runs and report mean + std
@@ -183,6 +184,10 @@ normalize_transform = torchvision.transforms.Normalize(
     mean=lightly.data.collate.imagenet_normalize["mean"],
     std=lightly.data.collate.imagenet_normalize["std"],
 )
+inv_normalize = torchvision.transforms.Normalize(
+    mean=[-0.485/0.229, -0.456/0.224, -0.406/0.255],
+    std=[1/0.229, 1/0.224, 1/0.255]
+)
 
 # Use SimCLR augmentations
 if dataset_name == 'imagenette':
@@ -221,6 +226,8 @@ if dataset_name == 'imagenette':
         global_crop_size=128, local_crop_size=64, global_grid_size=4, local_grid_size=2
     )
     msn_collate_fn = lightly.data.MSNCollateFunction(random_size=128, focal_size=64)
+
+    vqgan_collate_fn = lightly.data.MAECollateFunction(normalize=None, input_size=128)
 
     # No additional augmentations for the test set
     test_transforms = torchvision.transforms.Compose(
@@ -331,17 +338,20 @@ classes = len(dataset_test.dataset.classes)
 print('dataset_train_ssl length:', len(dataset_train_ssl))
 args["num_classes"] = classes
 
-def show_image(s):
-    s = s.detach().cpu().numpy().transpose(0, 2, 3, 1)[0]
-    # s = ((s+1.0)*127.5).clip(0,255).astype(np.uint8)
-    # s = ((s+.485)*0.225).clip(0,255).astype(np.uint8)
-    # s = ((s + .485) * 0.225*255).astype(np.uint8)
-    # s = ((s + .485) * 0.225 * 255)
-    # s = (s*255)
-    # reverse normalization
-    s = s * lightly.data.collate.imagenet_normalize["std"] + lightly.data.collate.imagenet_normalize["mean"]
-    s = s.clip(0, 255)
-    plt.imshow(s)
+def show_image(s, im=0, inv_normalize=False, times_255=False):
+    # plot im1 first image
+    if inv_normalize:
+        im1 = inv_normalize(s)
+    else:
+        im1 = copy.deepcopy(s)
+    im1 = im1.permute(0, 2, 3, 1)
+    im1 = im1.detach().cpu().numpy()
+    # im1 = (im1 + 1) / 2
+    if times_255:
+        im1 = im1 * 255
+    im1 = im1.astype(np.uint8)
+    im1 = im1[im]
+    plt.imshow(im1)
     plt.show()
 
 def get_data_loaders(batch_size: int, model):
@@ -365,6 +375,8 @@ def get_data_loaders(batch_size: int, model):
         col_fn = smog_collate_function
     elif model == VICRegLModel:
         col_fn = vicregl_collate_fn
+    elif model == vqganMAEModel:
+        col_fn = vqgan_collate_fn
     dataloader_train_ssl = torch.utils.data.DataLoader(
         dataset_train_ssl,
         batch_size=batch_size,
@@ -401,17 +413,15 @@ def get_data_loaders(batch_size: int, model):
     return dataloader_train_ssl, dataloader_train_kNN, dataloader_test, dataloader_train_probing
 
 
-# import sys
-#
-# sys.path.append('./vqgan/taming_transformers')
-# sys.path.append('./vqgan/')
-# import taming_transformers as taming
-# from taming.models import cond_transformer, vqgan
-# from taming import modules
-# from omegaconf import OmegaConf
-
-
 def load_vqgan_model(config_path, checkpoint_path):
+    import sys
+    sys.path.append('./vqgan/taming_transformers')
+    sys.path.append('./vqgan/')
+    import taming_transformers as taming
+    from taming.models import cond_transformer, vqgan
+    from taming import modules
+    from omegaconf import OmegaConf
+
     config = OmegaConf.load(config_path)
     if config.model.target == 'taming.models.vqgan.VQModel':
         model = vqgan.VQModel(**config.model.params)
@@ -1162,33 +1172,52 @@ class MAEModel(BenchmarkModule):
         return [optim], [cosine_scheduler]
 
 class vqganMAEModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes):
+        super().__init__(dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes)
 
         decoder_dim = 512
         vit = torchvision.models.vit_b_32(pretrained=False)
 
         self.warmup_epochs = 40 if max_epochs >= 800 else 20
-        self.mask_ratio = 0.75
-        self.patch_size = vit.patch_size
-        self.sequence_length = vit.seq_length
+        # self.mask_ratio = 0.75
+        self.mask_ratio = 0.25
+        # self.patch_size = vit.patch_size
+        self.patch_size = 2
+        # self.sequence_length = vit.seq_length
+        self.sequence_length = 4
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
-        self.backbone = masked_autoencoder.MAEBackbone.from_vit(vit)
+        # self.backbone = masked_autoencoder.MAEBackbone.from_vit(vit)
+        self.backbone = masked_autoencoder.vqganMAEBackbone(
+            image_size=8, # TODO: rm hardcode
+            patch_size=1, #TODO: check patch sizes
+            num_layers=6,
+            num_heads=4,
+            hidden_dim=256,
+            mlp_dim=256 * 4,
+        )
         self.decoder = masked_autoencoder.MAEDecoder(
-            seq_length=vit.seq_length,
+            seq_length=self.sequence_length,
             num_layers=1,
             num_heads=16,
-            embed_input_dim=vit.hidden_dim,
+            # embed_input_dim=vit.hidden_dim,
+            embed_input_dim=256,
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
-            out_dim=vit.patch_size ** 2 * 3,
+            # out_dim=self.patch_size ** 2 * 3,
+            out_dim=self.patch_size ** 2 * 256,
             dropout=0,
             attention_dropout=0,
         )
         self.criterion = nn.MSELoss()
 
-        self.model = load_vqgan_model(config_path='./vqgan/model.yaml', checkpoint_path='./vqgan/last.ckpt')
-        self.model.eval()
+        self.vqganmodel = load_vqgan_model(config_path='./vqgan/model.yaml', checkpoint_path='./vqgan/last.ckpt')
+        self.vqganmodel.eval()
+        self.vqgan_batch_size = 64
+
+        from transformers import ViTConfig, ViTModel
+        # Initializing a ViT vit-base-patch16-224 style configuration
+        configuration = ViTConfig(num_channels=256, image_size=14, patch_size=4, hidden_size =384, num_hidden_layers=6, num_attention_heads=6, intermediate_size=1536, encoder_stride=2,)
+        self.hidden_vit = ViTModel(configuration)
 
     def forward_encoder(self, images, idx_keep=None):
         return self.backbone.encode(images, idx_keep)
@@ -1210,19 +1239,22 @@ class vqganMAEModel(BenchmarkModule):
         x_pred = self.decoder.predict(x_pred)
         return x_pred
 
+    def images_to_codes(self, images):
+        codes = []
+        for i in range(0, images.shape[0], self.vqgan_batch_size):
+            quant, emb_loss, info = self.vqganmodel.encode(images[i:i + self.vqgan_batch_size])
+            codes.append(quant)
+        codes = torch.cat(codes, dim=0)
+        # TODO:use post-quantization convolutions????
+        if False:
+            codes = self.model.post_quant_conv(codes)
+        return codes
+
     def training_step(self, batch, batch_idx):
+        # (im1, im2), _, _ = batch
         images, _, _ = batch
 
-        image = images[3]
-
-        c_code, c_indices = self.model.encoder(images)
-        c_code = c_code.detach().cpu().numpy()
-        c_indices = c_indices.detach().cpu().numpy()
-
-        # c_code = c_code[3]
-        # c_indices = c_indices[3]
-        # c_code = c_code.reshape(1, -1)
-        # c_indices = c_indices.reshape(1, -1)
+        images = self.images_to_codes(images)
 
         batch_size = images.shape[0]
         idx_keep, idx_mask = utils.random_token_mask(
@@ -2073,7 +2105,8 @@ class TiCoModel(BenchmarkModule):
 # ]
 
 models = [
-    SLIPModel,
+    vqganMAEModel,
+    # SLIPModel,
     # SimCLRModel,
     # DINOModel,
     # MAEModel,

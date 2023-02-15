@@ -332,6 +332,8 @@ class BenchmarkModule(LightningModule):
                 img, target, _ = data
                 img = img.to(self.dummy_param.device)
                 target = target.to(self.dummy_param.device)
+                if self._get_name() == 'vqganMAEModel':
+                    img = self.images_to_codes(img)
                 feature = self.backbone(img).squeeze()
                 feature = F.normalize(feature, dim=1)
                 self.feature_bank.append(feature)
