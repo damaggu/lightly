@@ -1185,12 +1185,12 @@ class vqganMAEModel(BenchmarkModule):
         # self.patch_size = vit.patch_size
         self.patch_size = 2
         # self.sequence_length = vit.seq_length
-        self.sequence_length = 4
+        self.sequence_length = 16
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
         # self.backbone = masked_autoencoder.MAEBackbone.from_vit(vit)
         self.backbone = masked_autoencoder.vqganMAEBackbone(
             image_size=8, # TODO: rm hardcode
-            patch_size=1, #TODO: check patch sizes
+            patch_size=2, #TODO: check patch sizes
             num_layers=6,
             num_heads=4,
             hidden_dim=256,
@@ -1210,6 +1210,7 @@ class vqganMAEModel(BenchmarkModule):
             attention_dropout=0,
         )
         self.criterion = nn.MSELoss()
+        # self.criterion = nn.CrossEntropyLoss()
 
         self.vqganmodel = load_vqgan_model(config_path='./vqgan/model.yaml', checkpoint_path='./vqgan/last.ckpt')
         self.vqganmodel.eval()
