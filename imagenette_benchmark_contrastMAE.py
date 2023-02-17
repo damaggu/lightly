@@ -51,7 +51,8 @@ import math
 import os
 
 import sys
-sys.path.append(os.path.join(os.getcwd(), 'lightly'))
+
+sys.path.append(os.path.join(os.getcwd(), "lightly"))
 from lightly.utils import BenchmarkModule
 from lightly.models.modules import masked_autoencoder
 
@@ -81,6 +82,7 @@ from torchvision.models.vision_transformer import _vision_transformer
 import matplotlib.pyplot as plt
 from transformers import CLIPProcessor, CLIPModel
 from PIL import Image
+
 # import display
 
 
@@ -89,7 +91,7 @@ from PIL import Image
 
 import wandb
 
-logs_root_dir = os.path.join(os.getcwd(), 'benchmark_logs')
+logs_root_dir = os.path.join(os.getcwd(), "benchmark_logs")
 
 num_workers = 12
 memory_bank_size = 4096
@@ -102,8 +104,8 @@ if eli:
     batch_size = 4096
     val_epoch = 50
 else:
-    max_epochs = 200
-    batch_size = 256
+    max_epochs = 500
+    batch_size = 128
     val_epoch = 20
 
 lr_factor = batch_size / 256  # scales the learning rate linearly with batch size
@@ -114,39 +116,42 @@ n_runs = 1  # optional, increase to create multiple runs and report mean + std
 masking_ratio = 0.75
 patch_size = 16
 # msn_aug_mode = 'v9'
-msn_aug_mode = 'v0'
+msn_aug_mode = "v0"
 # byol_mode = 'v3'
-byol_mode = 'v0'
+byol_mode = "v0"
 msn_masking_ratio = 0.15
 # dataset_name = 'cifar10'
 # dataset_name = 'imagenette'
 # dataset_name = 'iNat2021mini'
-dataset_name = 'ChestMNIST'
+dataset_name = "ChestMNIST"
 # dataset_name = 'RetinaMNIST'
 # dataset_name = 'BreastMNIST'
-project_name = dataset_name + '_benchmark'
+project_name = dataset_name + "_benchmark"
 log_model = True
 
 
 #### linear probing args
 args = {}
 args["tuning_batch_size"] = 2048
-args['do_probing'] = False
-args['do_kNN'] = False
-args['do_medmnist'] = False
-if dataset_name in ['ChestMNIST', 'RetinaMNIST', 'BreastMNIST']:
-    args['do_medmnist'] = True
-    args['tuning_batch_size'] = 16384
-args['epochs_medmnist'] = 10
-args['lr_medmnist'] = 0.001
-args['gamma_medmnist'] = 0.1
-args['milestones_medmnist'] = [0.5 * args['epochs_medmnist'], 0.75 * args['epochs_medmnist']]
+args["do_probing"] = False
+args["do_kNN"] = False
+args["do_medmnist"] = False
+if dataset_name in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
+    args["do_medmnist"] = True
+    args["tuning_batch_size"] = 512
+args["epochs_medmnist"] = 1
+args["lr_medmnist"] = 0.001
+args["gamma_medmnist"] = 0.1
+args["milestones_medmnist"] = [
+    0.5 * args["epochs_medmnist"],
+    0.75 * args["epochs_medmnist"],
+]
 args["weight_decay"] = 0
-args["blr"] = 0.1
+args["blr"] = 0.01
 args["lr"] = args["blr"] * args["tuning_batch_size"] / 256
 # args["lr"] = 0.1
 # args["epochs"] = 90
-args["epochs"] = 10
+args["epochs"] = 100
 args["clip_grad"] = 1.0
 args["accum_iter"] = 1
 args["model_dim"] = 512
@@ -155,14 +160,15 @@ args["is_3d"] = False
 args["warmup_epochs"] = 10
 args["min_lr"] = 0.00001
 
-if dataset_name == 'cifar10' or dataset_name == 'imagenette':
+if dataset_name == "cifar10" or dataset_name == "imagenette":
     input_size = 128
-elif dataset_name == 'iNat2021mini':
+elif dataset_name == "iNat2021mini":
     input_size = 224
-elif dataset_name == 'ChestMNIST':
-    input_size = 28
+elif dataset_name == "ChestMNIST":
+    # input_size = 28
+    input_size = 224
 else:
-    raise ValueError('Invalid dataset name')
+    raise ValueError("Invalid dataset name")
 
 # Set to True to enable Distributed Data Parallel training.
 distributed = dist
@@ -200,26 +206,29 @@ normalize_transform = torchvision.transforms.Normalize(
     std=lightly.data.collate.imagenet_normalize["std"],
 )
 inv_normalize = torchvision.transforms.Normalize(
-    mean=[-0.485/0.229, -0.456/0.224, -0.406/0.255],
-    std=[1/0.229, 1/0.224, 1/0.255]
+    mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.255],
+    std=[1 / 0.229, 1 / 0.224, 1 / 0.255],
 )
 
 # Use SimCLR augmentations
-if dataset_name == 'imagenette':
+if dataset_name == "imagenette":
     collate_fn = lightly.data.SimCLRCollateFunction(
         input_size=input_size,
     )
-    if byol_mode == 'v1' or byol_mode == 'v2' or byol_mode == 'v3':
+    if byol_mode == "v1" or byol_mode == "v2" or byol_mode == "v3":
         # import Normalize from torchvision transforms
         collate_fn = lightly.data.SimCLRCollateFunction(
             input_size=input_size,
-            normalize={'mean': (0.48145466, 0.4578275, 0.40821073), 'std': (0.26862954, 0.26130258, 0.27577711)},
+            normalize={
+                "mean": (0.48145466, 0.4578275, 0.40821073),
+                "std": (0.26862954, 0.26130258, 0.27577711),
+            },
         )
 
     # Multi crop augmentation for SwAV
     swav_collate_fn = lightly.data.SwaVCollateFunction(
         crop_sizes=[128, 64],
-        crop_counts=[2, 6]  # 2 crops @ 128x128px and 6 crops @ 64x64px
+        crop_counts=[2, 6],  # 2 crops @ 128x128px and 6 crops @ 64x64px
     )
 
     # Multi crop augmentation for DINO, additionally, disable blur for cifar10
@@ -252,12 +261,10 @@ if dataset_name == 'imagenette':
             normalize_transform,
         ]
     )
-
-
-elif dataset_name == 'cifar10':
+elif dataset_name == "cifar10":
     collate_fn = lightly.data.SimCLRCollateFunction(
         input_size=32,
-        gaussian_blur=0.,
+        gaussian_blur=0.0,
     )
 
     # Multi crop augmentation for SwAV, additionally, disable blur for cifar10
@@ -279,20 +286,20 @@ elif dataset_name == 'cifar10':
     smog_collate_function = lightly.data.collate.SMoGCollateFunction(
         crop_sizes=[32, 32],
         crop_counts=[1, 1],
-        gaussian_blur_probs=[0., 0.],
+        gaussian_blur_probs=[0.0, 0.0],
         crop_min_scales=[0.2, 0.2],
         crop_max_scales=[1.0, 1.0],
     )
-elif dataset_name == 'iNat2021mini':  # for now same augmentations as imagenette
+elif dataset_name == "iNat2021mini":  # for now same augmentations as imagenette
     collate_fn = lightly.data.SimCLRCollateFunction(
         input_size=input_size,
-        gaussian_blur=0.0, # from eli's paper
+        gaussian_blur=0.0,  # from eli's paper
     )
 
     # Multi crop augmentation for SwAV
     swav_collate_fn = lightly.data.SwaVCollateFunction(
         crop_sizes=[224, 96],  # from paper
-        crop_counts=[2, 6]  # 2 crops @ 128x128px and 6 crops @ 64x64px
+        crop_counts=[2, 6],  # 2 crops @ 128x128px and 6 crops @ 64x64px
     )
 
     # Multi crop augmentation for DINO, additionally, disable blur for cifar10
@@ -322,62 +329,100 @@ elif dataset_name == 'iNat2021mini':  # for now same augmentations as imagenette
             normalize_transform,
         ]
     )
-elif dataset_name in ['medmnist', 'ChestMNIST']:
+elif dataset_name in ["medmnist", "ChestMNIST"]:
     collate_fn = lightly.data.SimCLRCollateFunction(
-        input_size=28,
-        gaussian_blur=0.1,
+        input_size=input_size,
+        gaussian_blur=0.0,  # from eli's paper
     )
 
     # Multi crop augmentation for SwAV
     swav_collate_fn = lightly.data.SwaVCollateFunction(
-        crop_sizes=[28, 14],
-        crop_counts=[2, 6]  # 2 crops @ 128x128px and 6 crops @ 64x64px
+        crop_sizes=[224, 96],  # from paper
+        crop_counts=[2, 6],  # 2 crops @ 128x128px and 6 crops @ 64x64px
     )
 
     # Multi crop augmentation for DINO, additionally, disable blur for cifar10
     dino_collate_fn = lightly.data.DINOCollateFunction(
-        global_crop_size=28,
-        local_crop_size=14,
+        global_crop_size=224,
+        local_crop_size=96,
     )
 
     # Two crops for SMoG
     smog_collate_function = lightly.data.collate.SMoGCollateFunction(
-        crop_sizes=[28, 28],
+        crop_sizes=[128, 128],
         crop_counts=[1, 1],
         crop_min_scales=[0.2, 0.2],
         crop_max_scales=[1.0, 1.0],
     )
     # Collate function passing geometrical transformation for VICRegL
     vicregl_collate_fn = lightly.data.VICRegLCollateFunction(
-        global_crop_size=28, local_crop_size=14, global_grid_size=4, local_grid_size=2
+        global_crop_size=224, local_crop_size=96, global_grid_size=4, local_grid_size=2
     )
-    msn_collate_fn = lightly.data.MSNCollateFunction(random_size=28, focal_size=14)
+    msn_collate_fn = lightly.data.MSNCollateFunction(random_size=224, focal_size=96)
     # No additional augmentations for the test set
     test_transforms = torchvision.transforms.Compose(
         [
-            torchvision.transforms.Resize(input_size),
-            torchvision.transforms.CenterCrop(28),
+            torchvision.transforms.Resize(224),
+            # torchvision.transforms.CenterCrop(224),
             torchvision.transforms.ToTensor(),
             normalize_transform,
         ]
     )
+    # collate_fn = lightly.data.SimCLRCollateFunction(
+    #     input_size=28,
+    #     gaussian_blur=0.1,
+    # )
+    #
+    # # Multi crop augmentation for SwAV
+    # swav_collate_fn = lightly.data.SwaVCollateFunction(
+    #     crop_sizes=[28, 14],
+    #     crop_counts=[2, 6]  # 2 crops @ 128x128px and 6 crops @ 64x64px
+    # )
+    #
+    # # Multi crop augmentation for DINO, additionally, disable blur for cifar10
+    # dino_collate_fn = lightly.data.DINOCollateFunction(
+    #     global_crop_size=28,
+    #     local_crop_size=14,
+    # )
+    #
+    # # Two crops for SMoG
+    # smog_collate_function = lightly.data.collate.SMoGCollateFunction(
+    #     crop_sizes=[28, 28],
+    #     crop_counts=[1, 1],
+    #     crop_min_scales=[0.2, 0.2],
+    #     crop_max_scales=[1.0, 1.0],
+    # )
+    # # Collate function passing geometrical transformation for VICRegL
+    # vicregl_collate_fn = lightly.data.VICRegLCollateFunction(
+    #     global_crop_size=28, local_crop_size=14, global_grid_size=4, local_grid_size=2
+    # )
+    # msn_collate_fn = lightly.data.MSNCollateFunction(random_size=28, focal_size=14)
+    # # No additional augmentations for the test set
+    # test_transforms = torchvision.transforms.Compose(
+    #     [
+    #         torchvision.transforms.Resize(input_size),
+    #         torchvision.transforms.CenterCrop(28),
+    #         torchvision.transforms.ToTensor(),
+    #         normalize_transform,
+    #     ]
 
 #  Single crop augmentation for MAE
 mae_collate_fn = lightly.data.MAECollateFunction()
 
-if dataset_name == 'imagenette':
-    path_to_train = './datasets/imagenette2-160/train/'
-    path_to_test = './datasets/imagenette2-160/val/'
-elif dataset_name == 'cifar10':
-    path_to_train = './datasets/cifar10/train/'
-    path_to_test = './datasets/cifar10/test/'
-elif dataset_name == 'iNat2021mini':
-    path_to_train = './datasets/inat/train_mini/'
-    path_to_test = './datasets/inat/val/'
-elif dataset_name == 'ChestMNIST':
+if dataset_name == "imagenette":
+    path_to_train = "./datasets/imagenette2-160/train/"
+    path_to_test = "./datasets/imagenette2-160/val/"
+elif dataset_name == "cifar10":
+    path_to_train = "./datasets/cifar10/train/"
+    path_to_test = "./datasets/cifar10/test/"
+elif dataset_name == "iNat2021mini":
+    path_to_train = "./datasets/inat/train_mini/"
+    path_to_test = "./datasets/inat/val/"
+elif dataset_name == "ChestMNIST":
     import medmnist
     import torchvision.transforms as T
-    root_dir_train = './datasets/medmnist/ChestMNIST/train'
+
+    root_dir_train = "./datasets/medmnist/ChestMNIST/train"
     if not os.path.exists(root_dir_train):
         os.makedirs(root_dir_train)
     train_dataset = medmnist.ChestMNIST(
@@ -386,7 +431,7 @@ elif dataset_name == 'ChestMNIST':
         download=True,
         root=root_dir_train,
     )
-    root_dir_test = './datasets/medmnist/ChestMNIST/test'
+    root_dir_test = "./datasets/medmnist/ChestMNIST/test"
     if not os.path.exists(root_dir_test):
         os.makedirs(root_dir_test)
     test_dataset = medmnist.ChestMNIST(
@@ -395,7 +440,7 @@ elif dataset_name == 'ChestMNIST':
         download=True,
         root=root_dir_test,
     )
-    root_dir_val = './datasets/medmnist/ChestMNIST/val'
+    root_dir_val = "./datasets/medmnist/ChestMNIST/val"
     if not os.path.exists(root_dir_val):
         os.makedirs(root_dir_val)
     val_dataset = medmnist.ChestMNIST(
@@ -405,16 +450,27 @@ elif dataset_name == 'ChestMNIST':
         root=root_dir_val,
     )
 
-    dataset_train_ssl = lightly.data.LightlyDataset.from_torch_dataset(train_dataset)
-    dataset_train_probing = lightly.data.LightlyDataset.from_torch_dataset(copy.deepcopy(train_dataset), transform=T.Compose([T.ToTensor(), T.Normalize(0.5, 0.5)]),)
-    dataset_train_kNN = lightly.data.LightlyDataset.from_torch_dataset(copy.deepcopy(train_dataset), transform=T.Compose([T.ToTensor(), T.Normalize(0.5, 0.5)]),)
-    dataset_test = lightly.data.LightlyDataset.from_torch_dataset(test_dataset, transform=T.Compose([T.ToTensor(), T.Normalize(0.5, 0.5)]), )
+    dataset_train_ssl = lightly.data.LightlyDataset.from_torch_dataset(
+        train_dataset,
+        transform=T.Compose([T.Resize(224)]),
+    )
+    dataset_train_probing = lightly.data.LightlyDataset.from_torch_dataset(
+        copy.deepcopy(train_dataset), transform=test_transforms
+    )
+    dataset_train_kNN = lightly.data.LightlyDataset.from_torch_dataset(
+        copy.deepcopy(train_dataset), transform=test_transforms
+    )
+    dataset_test = lightly.data.LightlyDataset.from_torch_dataset(
+        test_dataset, transform=test_transforms
+    )
 else:
-    raise ValueError('Unknown dataset name')
+    raise ValueError("Unknown dataset name")
 
-if dataset_name not in ['medmnist','ChestMNIST']:
+if dataset_name not in ["medmnist", "ChestMNIST"]:
     dataset_train_ssl = lightly.data.LightlyDataset(input_dir=path_to_train)
-    dataset_train_probing = lightly.data.LightlyDataset(input_dir=path_to_train, transform=test_transforms)
+    dataset_train_probing = lightly.data.LightlyDataset(
+        input_dir=path_to_train, transform=test_transforms
+    )
     # we use test transformations for getting the feature for kNN on train data
     dataset_train_kNN = lightly.data.LightlyDataset(
         input_dir=path_to_train, transform=test_transforms
@@ -425,11 +481,12 @@ if dataset_name not in ['medmnist','ChestMNIST']:
 
 try:
     # get the number of classes from the dataset
-    classes = len(dataset_train_ssl.dataset.info['label'])
+    classes = len(dataset_train_ssl.dataset.info["label"])
 except:
     classes = len(dataset_train_ssl.dataset.classes)
 
 args["num_classes"] = classes
+
 
 def show_image(s, im=0, inv_normalize=False, times_255=False):
     # plot im1 first image
@@ -447,12 +504,13 @@ def show_image(s, im=0, inv_normalize=False, times_255=False):
     plt.imshow(im1)
     plt.show()
 
+
 def get_data_loaders(
-        batch_size_train_ssl: int,
-        batch_size_train_probing: int,
-        batch_size_train_kNN: int,
-        batch_size_test: int,
-        model
+    batch_size_train_ssl: int,
+    batch_size_train_probing: int,
+    batch_size_train_kNN: int,
+    batch_size_test: int,
+    model,
 ):
     """Helper method to create dataloaders for ssl, kNN train and kNN test
 
@@ -512,36 +570,42 @@ def get_data_loaders(
         collate_fn=None,
     )
 
-    return dataloader_train_ssl, dataloader_train_kNN, dataloader_test, dataloader_train_probing
+    return (
+        dataloader_train_ssl,
+        dataloader_train_kNN,
+        dataloader_test,
+        dataloader_train_probing,
+    )
 
 
 def load_vqgan_model(config_path, checkpoint_path):
     import sys
-    sys.path.append('./vqgan/taming_transformers')
-    sys.path.append('./vqgan/')
+
+    sys.path.append("./vqgan/taming_transformers")
+    sys.path.append("./vqgan/")
     import taming_transformers as taming
     from taming.models import cond_transformer, vqgan
     from taming import modules
     from omegaconf import OmegaConf
 
     config = OmegaConf.load(config_path)
-    if config.model.target == 'taming.models.vqgan.VQModel':
+    if config.model.target == "taming.models.vqgan.VQModel":
         model = vqgan.VQModel(**config.model.params)
         model.eval().requires_grad_(False)
         model.init_from_ckpt(checkpoint_path)
 
-    elif config.model.target == 'taming.models.vqgan.GumbelVQ':
+    elif config.model.target == "taming.models.vqgan.GumbelVQ":
         model = vqgan.GumbelVQ(**config.model.params)
         model.eval().requires_grad_(False)
         model.init_from_ckpt(checkpoint_path)
 
-    elif config.model.target == 'taming.models.cond_transformer.Net2NetTransformer':
+    elif config.model.target == "taming.models.cond_transformer.Net2NetTransformer":
         parent_model = cond_transformer.Net2NetTransformer(**config.model.params)
         parent_model.eval().requires_grad_(False)
         parent_model.init_from_ckpt(checkpoint_path)
         model = parent_model.first_stage_model
     else:
-        raise ValueError(f'unknown model type: {config.model.target}')
+        raise ValueError(f"unknown model type: {config.model.target}")
     del model.loss
     return model
 
@@ -616,8 +680,12 @@ class MocoModel(BenchmarkModule):
 
 
 class SimCLRModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes):
-        super().__init__(dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
         feature_dim = list(resnet.children())[-1].in_features
@@ -625,9 +693,7 @@ class SimCLRModel(BenchmarkModule):
             *list(resnet.children())[:-1], nn.AdaptiveAvgPool2d(1)
         )
         self.projection_head = heads.SimCLRProjectionHead(feature_dim, feature_dim, 128)
-        self.criterion = lightly.loss.NTXentLoss(
-            gather_distributed=gather_distributed
-        )
+        self.criterion = lightly.loss.NTXentLoss(gather_distributed=gather_distributed)
 
     def forward(self, x):
         x = self.backbone(x).flatten(start_dim=1)
@@ -651,9 +717,13 @@ class SimCLRModel(BenchmarkModule):
         )
         if eli:
             self.warmup_epochs = 10
-            cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, max_epochs)
+            cosine_scheduler = scheduler.CosineWarmupScheduler(
+                optim, self.warmup_epochs, max_epochs
+            )
         else:
-            cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
+            cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optim, max_epochs
+            )
         return [optim], [cosine_scheduler]
 
 
@@ -664,7 +734,7 @@ def CLIP_embedding(frames, device, batch_size=64):
     res = []
     with torch.no_grad():
         for i in range(0, len(frames), batch_size):
-            batch = frames[i: i + batch_size]
+            batch = frames[i : i + batch_size]
             inputs = processor(
                 text=["a"] * len(batch),
                 images=[a for a in batch],
@@ -682,8 +752,12 @@ def CLIP_embedding(frames, device, batch_size=64):
 
 
 class SLIPModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes):
-        super().__init__(dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
         feature_dim = list(resnet.children())[-1].in_features
@@ -691,9 +765,7 @@ class SLIPModel(BenchmarkModule):
             *list(resnet.children())[:-1], nn.AdaptiveAvgPool2d(1)
         )
         self.projection_head = heads.SimCLRProjectionHead(feature_dim, feature_dim, 128)
-        self.criterion = lightly.loss.NTXentLoss(
-            gather_distributed=gather_distributed
-        )
+        self.criterion = lightly.loss.NTXentLoss(gather_distributed=gather_distributed)
 
     def forward(self, x):
         x = self.backbone(x).flatten(start_dim=1)
@@ -729,8 +801,12 @@ class SLIPModel(BenchmarkModule):
 
 
 class SimSiamModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
         feature_dim = list(resnet.children())[-1].in_features
@@ -768,8 +844,12 @@ class SimSiamModel(BenchmarkModule):
 
 
 class BarlowTwinsModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
         feature_dim = list(resnet.children())[-1].in_features
@@ -805,8 +885,12 @@ class BarlowTwinsModel(BenchmarkModule):
 
 
 class BYOLModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes):
-        super().__init__(dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
         feature_dim = list(resnet.children())[-1].in_features
@@ -826,8 +910,9 @@ class BYOLModel(BenchmarkModule):
 
         self.criterion = lightly.loss.NegativeCosineSimilarity()
 
-        if byol_mode == 'v1' or byol_mode == 'v2' or byol_mode == 'v3':
+        if byol_mode == "v1" or byol_mode == "v2" or byol_mode == "v3":
             import clip
+
             self.clip_model, self.preprocess = clip.load("ViT-B/16", device=self.device)
             utils.deactivate_requires_grad(self.clip_model)
 
@@ -845,33 +930,39 @@ class BYOLModel(BenchmarkModule):
 
     def training_step(self, batch, batch_idx):
         utils.update_momentum(self.backbone, self.backbone_momentum, m=0.99)
-        utils.update_momentum(self.projection_head, self.projection_head_momentum, m=0.99)
+        utils.update_momentum(
+            self.projection_head, self.projection_head_momentum, m=0.99
+        )
         (x0, x1), _, _ = batch
         p0, py0 = self.forward(x0)
         z0, zy0 = self.forward_momentum(x0)
         p1, py1 = self.forward(x1)
         z1, zy1 = self.forward_momentum(x1)
         loss = 0.5 * (self.criterion(p0, z1) + self.criterion(p1, z0))
-        if byol_mode == 'v1':
+        if byol_mode == "v1":
             x0_clip = self.clip_model.encode_image(x0)
             x1_clip = self.clip_model.encode_image(x1)
             loss += 0.5 * (self.criterion(py0, x0_clip) + self.criterion(py1, x1_clip))
-        if byol_mode == 'v2':
+        if byol_mode == "v2":
             x0_clip = self.clip_model.encode_image(x0)
             x1_clip = self.clip_model.encode_image(x1)
-            loss += (0.5 * (self.criterion(py0, x1_clip) + self.criterion(py1, x0_clip))) * 0.1
-        if byol_mode == 'v3':
+            loss += (
+                0.5 * (self.criterion(py0, x1_clip) + self.criterion(py1, x0_clip))
+            ) * 0.1
+        if byol_mode == "v3":
             x0_clip = self.clip_model.encode_image(x0)
             x1_clip = self.clip_model.encode_image(x1)
-            loss += (0.5 * (self.criterion(py0, x0_clip) + self.criterion(py1, x1_clip))) * 0.1
-        self.log('train_loss_ssl', loss)
+            loss += (
+                0.5 * (self.criterion(py0, x0_clip) + self.criterion(py1, x1_clip))
+            ) * 0.1
+        self.log("train_loss_ssl", loss)
         return loss
 
     def configure_optimizers(self):
         params = (
-                list(self.backbone.parameters())
-                + list(self.projection_head.parameters())
-                + list(self.prediction_head.parameters())
+            list(self.backbone.parameters())
+            + list(self.projection_head.parameters())
+            + list(self.prediction_head.parameters())
         )
         optim = torch.optim.SGD(
             params,
@@ -884,8 +975,12 @@ class BYOLModel(BenchmarkModule):
 
 
 class NNCLRModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
         feature_dim = list(resnet.children())[-1].in_features
@@ -926,8 +1021,12 @@ class NNCLRModel(BenchmarkModule):
 
 
 class SwaVModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
         feature_dim = list(resnet.children())[-1].in_features
@@ -979,8 +1078,12 @@ class SwaVModel(BenchmarkModule):
 
 
 class DINOModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
         feature_dim = list(resnet.children())[-1].in_features
@@ -1035,8 +1138,12 @@ class DINOModel(BenchmarkModule):
 
 
 class DCL(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
         feature_dim = list(resnet.children())[-1].in_features
@@ -1068,8 +1175,12 @@ class DCL(BenchmarkModule):
 
 
 class DCLW(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
         feature_dim = list(resnet.children())[-1].in_features
@@ -1196,9 +1307,14 @@ class DCLW(BenchmarkModule):
 #         else:
 #             return 0.5 * (1. + math.cos(math.pi * (epoch - self.warmup_epochs) / (max_epochs - self.warmup_epochs)))
 
+
 class MAEModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
 
         decoder_dim = 512
         vit = torchvision.models.vit_b_32(pretrained=False)
@@ -1216,7 +1332,7 @@ class MAEModel(BenchmarkModule):
             embed_input_dim=vit.hidden_dim,
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
-            out_dim=vit.patch_size ** 2 * 3,
+            out_dim=vit.patch_size**2 * 3,
             dropout=0,
             attention_dropout=0,
         )
@@ -1270,12 +1386,19 @@ class MAEModel(BenchmarkModule):
             weight_decay=0.05,
             betas=(0.9, 0.95),
         )
-        cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, max_epochs)
+        cosine_scheduler = scheduler.CosineWarmupScheduler(
+            optim, self.warmup_epochs, max_epochs
+        )
         return [optim], [cosine_scheduler]
 
+
 class vqganMAEModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes):
-        super().__init__(dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
 
         decoder_dim = 512
         vit = torchvision.models.vit_b_32(pretrained=False)
@@ -1290,8 +1413,8 @@ class vqganMAEModel(BenchmarkModule):
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
         # self.backbone = masked_autoencoder.MAEBackbone.from_vit(vit)
         self.backbone = masked_autoencoder.vqganMAEBackbone(
-            image_size=8, # TODO: rm hardcode
-            patch_size=2, #TODO: check patch sizes
+            image_size=8,  # TODO: rm hardcode
+            patch_size=2,  # TODO: check patch sizes
             num_layers=6,
             num_heads=4,
             hidden_dim=256,
@@ -1306,20 +1429,32 @@ class vqganMAEModel(BenchmarkModule):
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
             # out_dim=self.patch_size ** 2 * 3,
-            out_dim=self.patch_size ** 2 * 256,
+            out_dim=self.patch_size**2 * 256,
             dropout=0,
             attention_dropout=0,
         )
         self.criterion = nn.MSELoss()
         # self.criterion = nn.CrossEntropyLoss()
 
-        self.vqganmodel = load_vqgan_model(config_path='./vqgan/model.yaml', checkpoint_path='./vqgan/last.ckpt')
+        self.vqganmodel = load_vqgan_model(
+            config_path="./vqgan/model.yaml", checkpoint_path="./vqgan/last.ckpt"
+        )
         self.vqganmodel.eval()
         self.vqgan_batch_size = 64
 
         from transformers import ViTConfig, ViTModel
+
         # Initializing a ViT vit-base-patch16-224 style configuration
-        configuration = ViTConfig(num_channels=256, image_size=14, patch_size=4, hidden_size =384, num_hidden_layers=6, num_attention_heads=6, intermediate_size=1536, encoder_stride=2,)
+        configuration = ViTConfig(
+            num_channels=256,
+            image_size=14,
+            patch_size=4,
+            hidden_size=384,
+            num_hidden_layers=6,
+            num_attention_heads=6,
+            intermediate_size=1536,
+            encoder_stride=2,
+        )
         self.hidden_vit = ViTModel(configuration)
 
     def forward_encoder(self, images, idx_keep=None):
@@ -1345,7 +1480,9 @@ class vqganMAEModel(BenchmarkModule):
     def images_to_codes(self, images):
         codes = []
         for i in range(0, images.shape[0], self.vqgan_batch_size):
-            quant, emb_loss, info = self.vqganmodel.encode(images[i:i + self.vqgan_batch_size])
+            quant, emb_loss, info = self.vqganmodel.encode(
+                images[i : i + self.vqgan_batch_size]
+            )
             codes.append(quant)
         codes = torch.cat(codes, dim=0)
         # TODO:use post-quantization convolutions????
@@ -1384,12 +1521,14 @@ class vqganMAEModel(BenchmarkModule):
             weight_decay=0.05,
             betas=(0.9, 0.95),
         )
-        cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, max_epochs)
+        cosine_scheduler = scheduler.CosineWarmupScheduler(
+            optim, self.warmup_epochs, max_epochs
+        )
         return [optim], [cosine_scheduler]
 
 
 class contrastMAEModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes, contrastive_type='simclr'):
+    def __init__(self, dataloader_kNN, num_classes, contrastive_type="simclr"):
         super().__init__(dataloader_kNN, num_classes)
 
         decoder_dim = 512
@@ -1408,7 +1547,7 @@ class contrastMAEModel(BenchmarkModule):
             embed_input_dim=vit.hidden_dim,
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
-            out_dim=vit.patch_size ** 2 * 3,
+            out_dim=vit.patch_size**2 * 3,
             dropout=0,
             attention_dropout=0,
         )
@@ -1416,15 +1555,17 @@ class contrastMAEModel(BenchmarkModule):
         self.contrastive_type = contrastive_type
         feature_dim = 768
 
-        if self.contrastive_type == 'simclr':
-            self.projection_head = heads.SimCLRProjectionHead(feature_dim, feature_dim, 128)
+        if self.contrastive_type == "simclr":
+            self.projection_head = heads.SimCLRProjectionHead(
+                feature_dim, feature_dim, 128
+            )
             self.contrastive_criterion = lightly.loss.NTXentLoss()
 
             self.collate_fn = lightly.data.SimCLRCollateFunction(
                 input_size=feature_dim,
             )
 
-        elif self.contrastive_type == 'byol':
+        elif self.contrastive_type == "byol":
             self.projection_head = heads.BYOLProjectionHead(feature_dim, feature_dim)
             self.projection_head = heads.BYOLProjectionHead(feature_dim, 4096, 256)
             self.prediction_head = heads.BYOLPredictionHead(256, 4096, 256)
@@ -1436,7 +1577,7 @@ class contrastMAEModel(BenchmarkModule):
             utils.deactivate_requires_grad(self.projection_head_momentum)
 
             self.contrastive_criterion = lightly.loss.NegativeCosineSimilarity()
-        elif self.contrastive_type == 'moco':
+        elif self.contrastive_type == "moco":
             self.projection_head = heads.MoCoProjectionHead(feature_dim, 2048, 128)
             self.backbone_momentum = copy.deepcopy(self.backbone)
             self.projection_head_momentum = copy.deepcopy(self.projection_head)
@@ -1445,8 +1586,8 @@ class contrastMAEModel(BenchmarkModule):
 
             # create our loss with the optional memory bank
             self.contrastive_criterion = lightly.loss.NTXentLoss(
-                temperature=0.1,
-                memory_bank_size=memory_bank_size)
+                temperature=0.1, memory_bank_size=memory_bank_size
+            )
         else:
             raise NotImplementedError
 
@@ -1457,7 +1598,9 @@ class contrastMAEModel(BenchmarkModule):
         # build decoder input
         batch_size = x_encoded.shape[0]
         x_decode = self.decoder.embed(x_encoded)
-        x_masked = utils.repeat_token(self.mask_token, (batch_size, self.sequence_length))
+        x_masked = utils.repeat_token(
+            self.mask_token, (batch_size, self.sequence_length)
+        )
         x_masked = utils.set_at_index(x_masked, idx_keep, x_decode)
 
         # decoder forward pass
@@ -1470,24 +1613,38 @@ class contrastMAEModel(BenchmarkModule):
 
     def training_step(self, batch, batch_idx):
         (x0, x1), _, _ = batch
-        if self.contrastive_type == 'byol':
+        if self.contrastive_type == "byol":
             utils.update_momentum(self.backbone, self.backbone_momentum, m=0.99)
-            utils.update_momentum(self.projection_head, self.projection_head_momentum, m=0.99)
+            utils.update_momentum(
+                self.projection_head, self.projection_head_momentum, m=0.99
+            )
 
-            p0 = self.prediction_head(self.projection_head(self.backbone(x0).flatten(start_dim=1)))
-            z0 = self.projection_head_momentum(self.backbone_momentum(x0).flatten(start_dim=1)).detach()
-            p1 = self.prediction_head(self.projection_head(self.backbone(x1).flatten(start_dim=1)))
-            z1 = self.projection_head_momentum(self.backbone_momentum(x1).flatten(start_dim=1)).detach()
+            p0 = self.prediction_head(
+                self.projection_head(self.backbone(x0).flatten(start_dim=1))
+            )
+            z0 = self.projection_head_momentum(
+                self.backbone_momentum(x0).flatten(start_dim=1)
+            ).detach()
+            p1 = self.prediction_head(
+                self.projection_head(self.backbone(x1).flatten(start_dim=1))
+            )
+            z1 = self.projection_head_momentum(
+                self.backbone_momentum(x1).flatten(start_dim=1)
+            ).detach()
 
-            loss_contrastive = 0.5 * (self.contrastive_criterion(p0, z1) + self.contrastive_criterion(p1, z0))
+            loss_contrastive = 0.5 * (
+                self.contrastive_criterion(p0, z1) + self.contrastive_criterion(p1, z0)
+            )
             # x_encoded = self.forward_encoder(x)
             # x_encoded = self.projection_head(x_encoded)
             # x_encoded = x_encoded.reshape(batch_size, 2, -1).mean(dim=1)
             # x_pred = self.forward_decoder(x_encoded, idx_keep, idx_mask)
-        elif self.contrastive_type == 'moco':
+        elif self.contrastive_type == "moco":
             # update momentum
             utils.update_momentum(self.backbone, self.backbone_momentum, 0.99)
-            utils.update_momentum(self.projection_head, self.projection_head_momentum, 0.99)
+            utils.update_momentum(
+                self.projection_head, self.projection_head_momentum, 0.99
+            )
 
             def step(x0_, x1_):
                 x1_, shuffle = utils.batch_shuffle(x1_, distributed=distributed)
@@ -1507,9 +1664,13 @@ class contrastMAEModel(BenchmarkModule):
             loss_contrastive = 0.5 * (loss_1 + loss_2)
             # self.log('train_loss_ssl', loss)
 
-        elif self.contrastive_type == 'simclr':
-            z0 = self.forward(self.projection_head(self.backbone(x0).flatten(start_dim=1)))
-            z1 = self.forward(self.projection_head(self.backbone(x1).flatten(start_dim=1)))
+        elif self.contrastive_type == "simclr":
+            z0 = self.forward(
+                self.projection_head(self.backbone(x0).flatten(start_dim=1))
+            )
+            z1 = self.forward(
+                self.projection_head(self.backbone(x1).flatten(start_dim=1))
+            )
 
             loss_contrastive = self.contrastive_criterion(z0, z1)
             # self.log('train_loss_ssl', loss)
@@ -1537,9 +1698,9 @@ class contrastMAEModel(BenchmarkModule):
         # loss as average of both losses
         loss = 0.5 * (loss_contrastive + loss_reconstruction)
 
-        self.log('train_loss_ssl', loss)
-        self.log('train_loss_contrastive', loss_contrastive)
-        self.log('train_loss_reconstruction', loss_reconstruction)
+        self.log("train_loss_ssl", loss)
+        self.log("train_loss_contrastive", loss_contrastive)
+        self.log("train_loss_reconstruction", loss_reconstruction)
 
         return loss
 
@@ -1550,14 +1711,23 @@ class contrastMAEModel(BenchmarkModule):
             weight_decay=0.05,
             betas=(0.9, 0.95),
         )
-        cosine_with_warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(optim, self.scale_lr)
+        cosine_with_warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optim, self.scale_lr
+        )
         return [optim], [cosine_with_warmup_scheduler]
 
     def scale_lr(self, epoch):
         if epoch < self.warmup_epochs:
             return epoch / self.warmup_epochs
         else:
-            return 0.5 * (1. + math.cos(math.pi * (epoch - self.warmup_epochs) / (max_epochs - self.warmup_epochs)))
+            return 0.5 * (
+                1.0
+                + math.cos(
+                    math.pi
+                    * (epoch - self.warmup_epochs)
+                    / (max_epochs - self.warmup_epochs)
+                )
+            )
 
 
 # class MSNModel(BenchmarkModule):
@@ -1796,8 +1966,12 @@ class contrastMAEModel(BenchmarkModule):
 #         cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, max_epochs)
 #         return [optim], [cosine_scheduler]
 class MSNModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
 
         self.warmup_epochs = 15
         # ViT small configuration (ViT-S/16)
@@ -1864,7 +2038,9 @@ class MSNModel(BenchmarkModule):
             weight_decay=0.05,
             betas=(0.9, 0.95),
         )
-        cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, max_epochs)
+        cosine_scheduler = scheduler.CosineWarmupScheduler(
+            optim, self.warmup_epochs, max_epochs
+        )
         return [optim], [cosine_scheduler]
 
 
@@ -1872,9 +2048,12 @@ from sklearn.cluster import KMeans
 
 
 class SMoGModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
-
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
         # create a ResNet backbone and remove the classification head
         resnet = lightly.models.ResNetGenerator("resnet-18")
         self.backbone = nn.Sequential(
@@ -1923,7 +2102,6 @@ class SMoGModel(BenchmarkModule):
         utils.deactivate_requires_grad(self.projection_head_momentum)
 
     def training_step(self, batch, batch_idx):
-
         if self.global_step > 0 and self.global_step % 300 == 0:
             # reset group features and weights every 300 iterations
             self._reset_group_features()
@@ -1962,9 +2140,9 @@ class SMoGModel(BenchmarkModule):
 
     def configure_optimizers(self):
         params = (
-                list(self.backbone.parameters())
-                + list(self.projection_head.parameters())
-                + list(self.prediction_head.parameters())
+            list(self.backbone.parameters())
+            + list(self.projection_head.parameters())
+            + list(self.prediction_head.parameters())
         )
         optim = torch.optim.SGD(
             params,
@@ -1977,8 +2155,12 @@ class SMoGModel(BenchmarkModule):
 
 
 class SimMIMModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
 
         vit = torchvision.models.vit_b_32(pretrained=False)
         self.warmup_epochs = 40 if max_epochs >= 800 else 20
@@ -1992,7 +2174,7 @@ class SimMIMModel(BenchmarkModule):
         self.backbone = MAEBackbone.from_vit(vit)
 
         # the decoder is a simple linear layer
-        self.decoder = nn.Linear(vit.hidden_dim, vit.patch_size ** 2 * 3)
+        self.decoder = nn.Linear(vit.hidden_dim, vit.patch_size**2 * 3)
 
         # L1 loss as paper suggestion
         self.criterion = nn.L1Loss()
@@ -2039,13 +2221,19 @@ class SimMIMModel(BenchmarkModule):
             weight_decay=0.05,
             betas=(0.9, 0.999),
         )
-        cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, max_epochs)
+        cosine_scheduler = scheduler.CosineWarmupScheduler(
+            optim, self.warmup_epochs, max_epochs
+        )
         return [optim], [cosine_scheduler]
 
 
 class VICRegModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
         self.backbone = nn.Sequential(*list(resnet.children())[:-1])
@@ -2073,13 +2261,19 @@ class VICRegModel(BenchmarkModule):
             weight_decay=1e-4,
             momentum=0.9,
         )
-        cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, max_epochs)
+        cosine_scheduler = scheduler.CosineWarmupScheduler(
+            optim, self.warmup_epochs, max_epochs
+        )
         return [optim], [cosine_scheduler]
 
 
 class VICRegLModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
 
@@ -2125,13 +2319,19 @@ class VICRegLModel(BenchmarkModule):
             weight_decay=1e-4,
             momentum=0.9,
         )
-        cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, max_epochs)
+        cosine_scheduler = scheduler.CosineWarmupScheduler(
+            optim, self.warmup_epochs, max_epochs
+        )
         return [optim], [cosine_scheduler]
 
 
 class TiCoModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(
+        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
 
         resnet = torchvision.models.resnet18()
         self.backbone = nn.Sequential(*list(resnet.children())[:-1])
@@ -2178,7 +2378,9 @@ class TiCoModel(BenchmarkModule):
             weight_decay=1e-4,
             momentum=0.9,
         )
-        cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, max_epochs)
+        cosine_scheduler = scheduler.CosineWarmupScheduler(
+            optim, self.warmup_epochs, max_epochs
+        )
         return [optim], [cosine_scheduler]
 
 
@@ -2210,68 +2412,88 @@ class TiCoModel(BenchmarkModule):
 models = [
     # vqganMAEModel,
     # SLIPModel,
-    # SimCLRModel,
-    # DINOModel,
-    # MAEModel,
-    # vqganMAEModel,
-    # SwaVModel,
+    DINOModel,
     BYOLModel,
-    # MSNModel,
-    # SimMIMModel,
-    # TiCoModel,
-    # VICRegLModel,
+    SwaVModel,
+    MSNModel,
+    SimMIMModel,
+    MAEModel,
+    SimCLRModel,
+    TiCoModel,
+    VICRegLModel,
+    # vqganMAEModel,
 ]
 bench_results = dict()
 
 contrastive_types = [
-    'byol',
-    'moco',
-    'simclr',
+    "byol",
+    "moco",
+    "simclr",
 ]
 
 idx = 0
 experiment_version = None
 # loop through configurations and train models
 for BenchmarkModel in models:
-    model_name = BenchmarkModel.__name__.replace('Model', '')
+    model_name = BenchmarkModel.__name__.replace("Model", "")
     for contrastive_type in contrastive_types:
-        if not 'contrast' in model_name and contrastive_type in ['moco', 'simclr']:
+        if not "contrast" in model_name and contrastive_type in ["moco", "simclr"]:
             continue
         runs = []
 
-        if 'contrast' in model_name:
+        if "contrast" in model_name:
             model_name = model_name + contrastive_type
         for seed in range(n_runs):
-
-            if 'MSN' in model_name:
+            if "MSN" in model_name:
                 wandb_logger = WandbLogger(
-                    project=project_name, entity="maggu",
-                    name=f"{model_name}--_{msn_aug_mode}_224_{masking_ratio}_training--{seed}", log_model=log_model
+                    project=project_name,
+                    entity="maggu",
+                    name=f"{model_name}--_{msn_aug_mode}_224_{masking_ratio}_training--{seed}",
+                    log_model=log_model,
                 )
             else:
                 wandb_logger = WandbLogger(
-                    project=project_name, entity="maggu", name=f"{model_name}--training--{seed}", log_model=log_model
+                    project=project_name,
+                    entity="maggu",
+                    name=f"{model_name}--training--{seed}",
+                    log_model=log_model,
                 )
 
             pl.seed_everything(seed)
 
-            dataloader_train_ssl, dataloader_train_kNN, dataloader_test, dataloader_train_probing = get_data_loaders(
+            (
+                dataloader_train_ssl,
+                dataloader_train_kNN,
+                dataloader_test,
+                dataloader_train_probing,
+            ) = get_data_loaders(
                 batch_size_train_ssl=batch_size,
                 batch_size_train_kNN=batch_size,
-                batch_size_train_probing=args['tuning_batch_size'],
-                batch_size_test=args['tuning_batch_size'],
+                batch_size_train_probing=args["tuning_batch_size"],
+                batch_size_test=args["tuning_batch_size"],
                 model=BenchmarkModel,
             )
-            if 'contrast' in model_name:
-                benchmark_model = BenchmarkModel(dataloader_train_kNN, dataloader_train_probing, dataloader_test, args=args,
-                                                 num_classes=classes, contrastive_type=contrastive_type)
+            if "contrast" in model_name:
+                benchmark_model = BenchmarkModel(
+                    dataloader_train_kNN,
+                    dataloader_train_probing,
+                    dataloader_test,
+                    args=args,
+                    num_classes=classes,
+                    contrastive_type=contrastive_type,
+                )
             else:
-                benchmark_model = BenchmarkModel(dataloader_train_kNN, dataloader_train_probing, dataloader_test, args=args,
-                                                 num_classes=classes)
+                benchmark_model = BenchmarkModel(
+                    dataloader_train_kNN,
+                    dataloader_train_probing,
+                    dataloader_test,
+                    args=args,
+                    num_classes=classes,
+                )
 
             # Save logs to: {CWD}/benchmark_logs/cifar10/{experiment_version}/{model_name}/
             # If multiple runs are specified a subdirectory for each run is created.
-            sub_dir = model_name if n_runs <= 1 else f'{model_name}/run{seed}'
+            sub_dir = model_name if n_runs <= 1 else f"{model_name}/run{seed}"
             # logger = TensorBoardLogger(
             #     save_dir=os.path.join(logs_root_dir, dataset_name),
             #     name='',
@@ -2285,9 +2507,7 @@ for BenchmarkModel in models:
             #     dirpath=os.path.join(logger.log_dir, 'checkpoints')
             # )
 
-            wandb_logger.watch(
-                benchmark_model, log_graph=False, log="all", log_freq=5
-            )
+            wandb_logger.watch(benchmark_model, log_graph=False, log="all", log_freq=5)
 
             # trainer = pl.Trainer(
             #     max_epochs=max_epochs,
@@ -2312,18 +2532,18 @@ for BenchmarkModel in models:
             trainer.fit(
                 benchmark_model,
                 train_dataloaders=dataloader_train_ssl,
-                val_dataloaders=dataloader_test
+                val_dataloaders=dataloader_test,
             )
 
             end = time.time()
             run = {
-                'model': model_name,
-                'batch_size': batch_size,
-                'epochs': max_epochs,
-                'max_accuracy': benchmark_model.max_accuracy,
-                'runtime': end - start,
-                'gpu_memory_usage': torch.cuda.max_memory_allocated(),
-                'seed': seed,
+                "model": model_name,
+                "batch_size": batch_size,
+                "epochs": max_epochs,
+                "max_accuracy": benchmark_model.max_accuracy,
+                "runtime": end - start,
+                "gpu_memory_usage": torch.cuda.max_memory_allocated(),
+                "seed": seed,
             }
             runs.append(run)
             print(run)
@@ -2347,9 +2567,9 @@ if False:
         f"| {'Model':<13} | {'Batch Size':>10} | {'Epochs':>6} "
         f"| {'KNN Test Accuracy':>18} | {'Time':>10} | {'Peak GPU Usage':>14} |"
     )
-    print('-' * len(header))
+    print("-" * len(header))
     print(header)
-    print('-' * len(header))
+    print("-" * len(header))
     idx = 0
     for model, results in bench_results.items():
         wandb.init(
@@ -2363,11 +2583,11 @@ if False:
         idx += 1
         if idx == 5:
             break
-        runtime = np.array([result['runtime'] for result in results])
+        runtime = np.array([result["runtime"] for result in results])
         runtime = runtime.mean() / 60  # convert to min
-        accuracy = np.array([result['max_accuracy'] for result in results])
-        gpu_memory_usage = np.array([result['gpu_memory_usage'] for result in results])
-        gpu_memory_usage = gpu_memory_usage.max() / (1024 ** 3)  #  convert to gbyte
+        accuracy = np.array([result["max_accuracy"] for result in results])
+        gpu_memory_usage = np.array([result["gpu_memory_usage"] for result in results])
+        gpu_memory_usage = gpu_memory_usage.max() / (1024**3)  #  convert to gbyte
 
         if len(accuracy) > 1:
             accuracy_msg = f"{accuracy.mean():>8.3f} +- {accuracy.std():>4.3f}"
@@ -2378,17 +2598,19 @@ if False:
             f"| {model:<13} | {batch_size:>10} | {max_epochs:>6} "
             f"| {accuracy_msg} | {runtime:>6.1f} Min "
             f"| {gpu_memory_usage:>8.1f} GByte |",
-            flush=True
+            flush=True,
         )
 
-        wandb.log({
-            'model': model,
-            'batch_size': batch_size,
-            'epochs': max_epochs,
-            'max_accuracy': accuracy.mean(),
-            'runtime': runtime,
-            'gpu_memory_usage': gpu_memory_usage,
-        })
+        wandb.log(
+            {
+                "model": model,
+                "batch_size": batch_size,
+                "epochs": max_epochs,
+                "max_accuracy": accuracy.mean(),
+                "runtime": runtime,
+                "gpu_memory_usage": gpu_memory_usage,
+            }
+        )
         wandb.finish()
         time.sleep(6)
-    print('-' * len(header))
+    print("-" * len(header))
