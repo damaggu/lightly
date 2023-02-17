@@ -487,7 +487,7 @@ class BenchmarkModule(LightningModule):
                 self.log('medmnist_acc', acc, prog_bar=True)
 
             epoch_loss = sum(total_loss) / len(total_loss)
-            for _, p in self.model.named_parameters():
+            for _, p in self.backbone.named_parameters():
                 p.requires_grad = True
             torch.set_grad_enabled(False)
             del self.backbone.head
