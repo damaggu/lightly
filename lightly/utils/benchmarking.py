@@ -9,9 +9,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pytorch_lightning import LightningModule
 from torch.utils.data import DataLoader
+from tqdm import tqdm
+
 from fb_MAE.engine_finetune import train_one_epoch, evaluate
 from pl_bolts.optimizers.lars import LARS
 from torch._six import inf
+
 
 # code for kNN prediction from here:
 # https://colab.research.google.com/github/facebookresearch/moco/blob/colab-notebook/colab/moco_cifar10_demo.ipynb
@@ -142,7 +145,8 @@ def evaluate_model_linear_probing(
     linear_layer.weight.data.normal_(mean=0.0, std=0.01)
     linear_layer.bias.data.zero_()
 
-    model.head = nn.Sequential(nn.Flatten(start_dim=1), torch.nn.BatchNorm1d(args["model_dim"], affine=False, eps=1e-6), linear_layer)
+    model.head = nn.Sequential(nn.Flatten(start_dim=1), torch.nn.BatchNorm1d(args["model_dim"], affine=False, eps=1e-6),
+                               linear_layer)
 
     for _, p in model.named_parameters():
         p.requires_grad = False
@@ -348,23 +352,24 @@ class BenchmarkModule(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         # we can only do kNN predictions once we have a feature bank
-        if hasattr(self, 'feature_bank') and hasattr(self, 'targets_bank'):
-            images, targets, _ = batch
-            if self._get_name() == 'vqganMAEModel':
-                images = self.images_to_codes(images)
-            feature = self.backbone(images).squeeze()
-            feature = F.normalize(feature, dim=1)
-            pred_labels = knn_predict(
-                feature,
-                self.feature_bank,
-                self.targets_bank,
-                self.num_classes,
-                self.knn_k,
-                self.knn_t
-            )
-            num = images.size()
-            top1 = (pred_labels[:, 0] == targets).float().sum()
-            return (num, top1)
+        if self.args['do_kNN']:
+            if hasattr(self, 'feature_bank') and hasattr(self, 'targets_bank'):
+                images, targets, _ = batch
+                if self._get_name() == 'vqganMAEModel':
+                    images = self.images_to_codes(images)
+                feature = self.backbone(images).squeeze()
+                feature = F.normalize(feature, dim=1)
+                pred_labels = knn_predict(
+                    feature,
+                    self.feature_bank,
+                    self.targets_bank,
+                    self.num_classes,
+                    self.knn_k,
+                    self.knn_t
+                )
+                num = images.size()
+                top1 = (pred_labels[:, 0] == targets).float().sum()
+                return (num, top1)
 
     def validation_epoch_end(self, outputs):
         device = self.dummy_param.device
@@ -387,11 +392,103 @@ class BenchmarkModule(LightningModule):
             # also perform linear probing
             # with torch.no_grad():
 
-            if self.args['do_probing']:
-                torch.set_grad_enabled(True)
-                max_accuracy, acc1, _, _ = evaluate_model_linear_probing(self.backbone, self.dataloader_train_ssl, self.dataloader_test, device, self.args, addition_model=self)
-                torch.set_grad_enabled(False)
-                self.log('linear_probing_accuracy1', acc1, prog_bar=True)
-                print(f"Current linear probing accuracy1: {acc1:.2f} %")
-                # remove model.head from the backbone
-                del self.backbone.head
+        if self.args['do_probing']:
+            torch.set_grad_enabled(True)
+            max_accuracy, acc1, _, _ = evaluate_model_linear_probing(self.backbone, self.dataloader_train_ssl,
+                                                                     self.dataloader_test, device, self.args,
+                                                                     addition_model=self)
+            torch.set_grad_enabled(False)
+            self.log('linear_probing_accuracy1', acc1, prog_bar=True)
+            print(f"Current linear probing accuracy1: {acc1:.2f} %")
+            # remove model.head from the backbone
+            del self.backbone.head
+
+        if self.args['do_medmnist']:
+            torch.set_grad_enabled(True)
+            print('uy')
+            import medmnist
+
+            task = self.dataloader_test.dataset.dataset.info['task']
+            data_flag = self.dataloader_test.dataset.dataset.flag
+
+            # val_evaluator = medmnist.Evaluator(data_flag, 'val
+            test_evaluator = medmnist.Evaluator(data_flag, 'test', root=self.dataloader_test.dataset.dataset.root)
+            # evaluators = {'val': val_evaluator, 'test': test_evaluator}
+
+            linear_layer = nn.Linear(self.args["model_dim"], self.args["num_classes"], bias=True)
+            linear_layer.weight.data.normal_(mean=0.0, std=0.01)
+            linear_layer.bias.data.zero_()
+
+            self.backbone.head = nn.Sequential(nn.Flatten(start_dim=1),
+                                               torch.nn.BatchNorm1d(self.args["model_dim"], affine=False, eps=1e-6),
+                                               linear_layer)
+
+            for _, p in self.backbone.named_parameters():
+                p.requires_grad = False
+            for _, p in self.backbone.head.named_parameters():
+                p.requires_grad = True
+
+            self.backbone.to(self.dummy_param.device)
+
+            if task == "multi-label, binary-class":
+                criterion = nn.BCEWithLogitsLoss()
+            else:
+                criterion = nn.CrossEntropyLoss()
+
+            optimizer = torch.optim.Adam(self.backbone.head.parameters(), lr=self.args['lr_medmnist'])
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.args['milestones_medmnist'], gamma=self.args['gamma_medmnist'])
+
+            print('Training the linear head for 10 epochs...')
+            total_loss = []
+            for epoch in range(self.args['epochs_medmnist']):
+                scheduler.step()
+                for batch_idx, (inputs, targets, _) in tqdm(enumerate(self.dataloader_test)):
+                    optimizer.zero_grad()
+                    inputs = inputs.to(self.dummy_param.device)
+                    outputs = self.backbone(inputs).squeeze()
+                    # outputs = F.normalize(outputs, dim=1)
+
+                    if task == 'multi-label, binary-class':
+                        targets = targets.to(torch.float32).to(self.dummy_param.device)
+                        loss = criterion(outputs, targets)
+                    else:
+                        targets = torch.squeeze(targets, 1).long().to(self.dummy_param.device)
+                        loss = criterion(outputs, targets)
+
+                    total_loss.append(loss.item())
+                    loss.backward()
+                    optimizer.step()
+
+            self.backbone.eval()
+            y_score = torch.tensor([]).to(device)
+            with torch.no_grad():
+                for batch_idx, (inputs, targets, _) in enumerate(self.dataloader_test):
+                    inputs = inputs.to(self.dummy_param.device)
+                    outputs = self.backbone(inputs).squeeze()
+                    # outputs = F.normalize(outputs, dim=1)
+
+                    if task == 'multi-label, binary-class':
+                        targets = targets.to(torch.float32).to(self.dummy_param.device)
+                        loss = criterion(outputs, targets)
+                        m = nn.Sigmoid()
+                        outputs = m(outputs).to(self.dummy_param.device)
+                    else:
+                        targets = torch.squeeze(targets, 1).long().to(self.dummy_param.device)
+                        loss = criterion(outputs, targets)
+                        m = nn.Softmax(dim=1)
+                        outputs = m(outputs).to(self.dummy_param.device)
+                        targets = targets.float().resize_(len(targets), 1)
+
+                    y_score = torch.cat((y_score, outputs), 0)
+
+                y_score = y_score.detach().cpu().numpy()
+                auc, acc = test_evaluator.evaluate(y_score)
+                self.log('medmnist_auc', auc, prog_bar=True)
+                self.log('medmnist_acc', acc, prog_bar=True)
+
+            epoch_loss = sum(total_loss) / len(total_loss)
+            for _, p in self.model.named_parameters():
+                p.requires_grad = True
+            torch.set_grad_enabled(False)
+            del self.backbone.head
+            self.backbone.train()

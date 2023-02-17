@@ -65,6 +65,7 @@ import torchvision
 from kornia.feature import DenseSIFTDescriptor
 from lightly.models import modules
 from lightly.models.modules import heads
+from torchvision.transforms import Normalize, Compose
 
 from modified_items import MAEBackbone, MAEDecoder, learned_token_mask
 from lightly.models import utils
@@ -118,20 +119,31 @@ msn_aug_mode = 'v0'
 byol_mode = 'v0'
 msn_masking_ratio = 0.15
 # dataset_name = 'cifar10'
-dataset_name = 'imagenette'
+# dataset_name = 'imagenette'
 # dataset_name = 'iNat2021mini'
-# dataset_name = 'medmnist'
+dataset_name = 'ChestMNIST'
+# dataset_name = 'RetinaMNIST'
+# dataset_name = 'BreastMNIST'
 project_name = dataset_name + '_benchmark'
 log_model = True
 
 
 #### linear probing args
 args = {}
+args["tuning_batch_size"] = 2048
 args['do_probing'] = False
-args["batch_size"] = 2048
+args['do_kNN'] = False
+args['do_medmnist'] = False
+if dataset_name in ['ChestMNIST', 'RetinaMNIST', 'BreastMNIST']:
+    args['do_medmnist'] = True
+    args['tuning_batch_size'] = 16384
+args['epochs_medmnist'] = 10
+args['lr_medmnist'] = 0.001
+args['gamma_medmnist'] = 0.1
+args['milestones_medmnist'] = [0.5 * args['epochs_medmnist'], 0.75 * args['epochs_medmnist']]
 args["weight_decay"] = 0
 args["blr"] = 0.1
-args["lr"] = args["blr"] * args["batch_size"] / 256
+args["lr"] = args["blr"] * args["tuning_batch_size"] / 256
 # args["lr"] = 0.1
 # args["epochs"] = 90
 args["epochs"] = 10
@@ -147,6 +159,8 @@ if dataset_name == 'cifar10' or dataset_name == 'imagenette':
     input_size = 128
 elif dataset_name == 'iNat2021mini':
     input_size = 224
+elif dataset_name == 'ChestMNIST':
+    input_size = 28
 else:
     raise ValueError('Invalid dataset name')
 
@@ -197,7 +211,6 @@ if dataset_name == 'imagenette':
     )
     if byol_mode == 'v1' or byol_mode == 'v2' or byol_mode == 'v3':
         # import Normalize from torchvision transforms
-        from torchvision.transforms import Normalize
         collate_fn = lightly.data.SimCLRCollateFunction(
             input_size=input_size,
             normalize={'mean': (0.48145466, 0.4578275, 0.40821073), 'std': (0.26862954, 0.26130258, 0.27577711)},
@@ -309,6 +322,45 @@ elif dataset_name == 'iNat2021mini':  # for now same augmentations as imagenette
             normalize_transform,
         ]
     )
+elif dataset_name in ['medmnist', 'ChestMNIST']:
+    collate_fn = lightly.data.SimCLRCollateFunction(
+        input_size=28,
+        gaussian_blur=0.1,
+    )
+
+    # Multi crop augmentation for SwAV
+    swav_collate_fn = lightly.data.SwaVCollateFunction(
+        crop_sizes=[28, 14],
+        crop_counts=[2, 6]  # 2 crops @ 128x128px and 6 crops @ 64x64px
+    )
+
+    # Multi crop augmentation for DINO, additionally, disable blur for cifar10
+    dino_collate_fn = lightly.data.DINOCollateFunction(
+        global_crop_size=28,
+        local_crop_size=14,
+    )
+
+    # Two crops for SMoG
+    smog_collate_function = lightly.data.collate.SMoGCollateFunction(
+        crop_sizes=[28, 28],
+        crop_counts=[1, 1],
+        crop_min_scales=[0.2, 0.2],
+        crop_max_scales=[1.0, 1.0],
+    )
+    # Collate function passing geometrical transformation for VICRegL
+    vicregl_collate_fn = lightly.data.VICRegLCollateFunction(
+        global_crop_size=28, local_crop_size=14, global_grid_size=4, local_grid_size=2
+    )
+    msn_collate_fn = lightly.data.MSNCollateFunction(random_size=28, focal_size=14)
+    # No additional augmentations for the test set
+    test_transforms = torchvision.transforms.Compose(
+        [
+            torchvision.transforms.Resize(input_size),
+            torchvision.transforms.CenterCrop(28),
+            torchvision.transforms.ToTensor(),
+            normalize_transform,
+        ]
+    )
 
 #  Single crop augmentation for MAE
 mae_collate_fn = lightly.data.MAECollateFunction()
@@ -322,21 +374,61 @@ elif dataset_name == 'cifar10':
 elif dataset_name == 'iNat2021mini':
     path_to_train = './datasets/inat/train_mini/'
     path_to_test = './datasets/inat/val/'
+elif dataset_name == 'ChestMNIST':
+    import medmnist
+    import torchvision.transforms as T
+    root_dir_train = './datasets/medmnist/ChestMNIST/train'
+    if not os.path.exists(root_dir_train):
+        os.makedirs(root_dir_train)
+    train_dataset = medmnist.ChestMNIST(
+        as_rgb=True,
+        split="train",
+        download=True,
+        root=root_dir_train,
+    )
+    root_dir_test = './datasets/medmnist/ChestMNIST/test'
+    if not os.path.exists(root_dir_test):
+        os.makedirs(root_dir_test)
+    test_dataset = medmnist.ChestMNIST(
+        as_rgb=True,
+        split="test",
+        download=True,
+        root=root_dir_test,
+    )
+    root_dir_val = './datasets/medmnist/ChestMNIST/val'
+    if not os.path.exists(root_dir_val):
+        os.makedirs(root_dir_val)
+    val_dataset = medmnist.ChestMNIST(
+        as_rgb=True,
+        split="val",
+        download=True,
+        root=root_dir_val,
+    )
+
+    dataset_train_ssl = lightly.data.LightlyDataset.from_torch_dataset(train_dataset)
+    dataset_train_probing = lightly.data.LightlyDataset.from_torch_dataset(copy.deepcopy(train_dataset), transform=T.Compose([T.ToTensor(), T.Normalize(0.5, 0.5)]),)
+    dataset_train_kNN = lightly.data.LightlyDataset.from_torch_dataset(copy.deepcopy(train_dataset), transform=T.Compose([T.ToTensor(), T.Normalize(0.5, 0.5)]),)
+    dataset_test = lightly.data.LightlyDataset.from_torch_dataset(test_dataset, transform=T.Compose([T.ToTensor(), T.Normalize(0.5, 0.5)]), )
 else:
     raise ValueError('Unknown dataset name')
 
-dataset_train_ssl = lightly.data.LightlyDataset(input_dir=path_to_train)
-dataset_train_probing = lightly.data.LightlyDataset(input_dir=path_to_train, transform=test_transforms)
-# we use test transformations for getting the feature for kNN on train data
-dataset_train_kNN = lightly.data.LightlyDataset(
-    input_dir=path_to_train, transform=test_transforms
-)
-dataset_test = lightly.data.LightlyDataset(
-    input_dir=path_to_test, transform=test_transforms
-)
+if dataset_name not in ['medmnist','ChestMNIST']:
+    dataset_train_ssl = lightly.data.LightlyDataset(input_dir=path_to_train)
+    dataset_train_probing = lightly.data.LightlyDataset(input_dir=path_to_train, transform=test_transforms)
+    # we use test transformations for getting the feature for kNN on train data
+    dataset_train_kNN = lightly.data.LightlyDataset(
+        input_dir=path_to_train, transform=test_transforms
+    )
+    dataset_test = lightly.data.LightlyDataset(
+        input_dir=path_to_test, transform=test_transforms
+    )
 
-classes = len(dataset_test.dataset.classes)
-print('dataset_train_ssl length:', len(dataset_train_ssl))
+try:
+    # get the number of classes from the dataset
+    classes = len(dataset_train_ssl.dataset.info['label'])
+except:
+    classes = len(dataset_train_ssl.dataset.classes)
+
 args["num_classes"] = classes
 
 def show_image(s, im=0, inv_normalize=False, times_255=False):
@@ -355,7 +447,13 @@ def show_image(s, im=0, inv_normalize=False, times_255=False):
     plt.imshow(im1)
     plt.show()
 
-def get_data_loaders(batch_size: int, model):
+def get_data_loaders(
+        batch_size_train_ssl: int,
+        batch_size_train_probing: int,
+        batch_size_train_kNN: int,
+        batch_size_test: int,
+        model
+):
     """Helper method to create dataloaders for ssl, kNN train and kNN test
 
     Args:
@@ -380,7 +478,7 @@ def get_data_loaders(batch_size: int, model):
         col_fn = vqgan_collate_fn
     dataloader_train_ssl = torch.utils.data.DataLoader(
         dataset_train_ssl,
-        batch_size=batch_size,
+        batch_size=batch_size_train_ssl,
         shuffle=True,
         collate_fn=col_fn,
         drop_last=True,
@@ -388,27 +486,30 @@ def get_data_loaders(batch_size: int, model):
     )
     dataloader_train_probing = torch.utils.data.DataLoader(
         dataset_train_probing,
-        batch_size=batch_size,
+        batch_size=batch_size_train_probing,
         shuffle=True,
         # collate_fn=col_fn,
+        collate_fn=None,
         drop_last=True,
         num_workers=num_workers,
     )
 
     dataloader_train_kNN = torch.utils.data.DataLoader(
         dataset_train_kNN,
-        batch_size=batch_size,
+        batch_size=batch_size_train_kNN,
         shuffle=False,
         drop_last=False,
         num_workers=num_workers,
+        collate_fn=None,
     )
 
     dataloader_test = torch.utils.data.DataLoader(
         dataset_test,
-        batch_size=batch_size,
+        batch_size=batch_size_test,
         shuffle=False,
         drop_last=False,
         num_workers=num_workers,
+        collate_fn=None,
     )
 
     return dataloader_train_ssl, dataloader_train_kNN, dataloader_test, dataloader_train_probing
@@ -2107,9 +2208,9 @@ class TiCoModel(BenchmarkModule):
 # ]
 
 models = [
-    vqganMAEModel,
+    # vqganMAEModel,
     # SLIPModel,
-    # SimCLRModel,
+    SimCLRModel,
     # DINOModel,
     # MAEModel,
     # vqganMAEModel,
@@ -2155,7 +2256,10 @@ for BenchmarkModel in models:
             pl.seed_everything(seed)
 
             dataloader_train_ssl, dataloader_train_kNN, dataloader_test, dataloader_train_probing = get_data_loaders(
-                batch_size=batch_size,
+                batch_size_train_ssl=batch_size,
+                batch_size_train_kNN=batch_size,
+                batch_size_train_probing=args['tuning_batch_size'],
+                batch_size_test=args['tuning_batch_size'],
                 model=BenchmarkModel,
             )
             if 'contrast' in model_name:
