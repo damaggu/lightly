@@ -805,8 +805,8 @@ class BarlowTwinsModel(BenchmarkModule):
 
 
 class BYOLModel(BenchmarkModule):
-    def __init__(self, dataloader_kNN, num_classes):
-        super().__init__(dataloader_kNN, num_classes)
+    def __init__(self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes):
+        super().__init__(dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes)
         # create a ResNet backbone and remove the classification head
         resnet = torchvision.models.resnet18()
         feature_dim = list(resnet.children())[-1].in_features
@@ -2210,12 +2210,12 @@ class TiCoModel(BenchmarkModule):
 models = [
     # vqganMAEModel,
     # SLIPModel,
-    SimCLRModel,
+    # SimCLRModel,
     # DINOModel,
     # MAEModel,
     # vqganMAEModel,
     # SwaVModel,
-    # BYOLModel,
+    BYOLModel,
     # MSNModel,
     # SimMIMModel,
     # TiCoModel,
