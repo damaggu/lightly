@@ -6,3 +6,4 @@ pytorch_lightning==1.8.6
 transformers
 einops
 timm
+medmnist
