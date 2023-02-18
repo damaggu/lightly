@@ -142,7 +142,7 @@ if dataset_name in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
     mae_masking_ratio = 0.5
     msn_masking_ratio = 0.15
     patch_size = 2
-args["epochs_medmnist"] = 1
+args["epochs_medmnist"] = 50
 args["lr_medmnist"] = 0.001
 args["gamma_medmnist"] = 0.1
 args["milestones_medmnist"] = [

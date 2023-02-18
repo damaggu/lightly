@@ -463,10 +463,11 @@ class BenchmarkModule(LightningModule):
                         loss = criterion(outputs, targets)
 
                     # log the loss for current_epoch
-                    losses.append(loss.item())
+
                     total_loss.append(loss.item())
                     loss.backward()
                     optimizer.step()
+                losses.append(np.mean(total_loss))
 
             def plot_loss(losses, epoch):
                 plt.figure()
@@ -482,7 +483,7 @@ class BenchmarkModule(LightningModule):
                 return image
 
             # log a plot of the loss for current_epoch using matplotlib
-            self.logger.log_image(key='loss vs. batches',
+            self.logger.log_image(key='loss vs. epochs',
                                   images=[plot_loss(losses, self.current_epoch)]
                                   )
 
