@@ -471,9 +471,10 @@ class BenchmarkModule(LightningModule):
                 plt.title(f'Loss vs. Batches, epoch {epoch}')
                 return plt
             # log a plot of the loss for current_epoch using matplotlib
-            self.logger.experiment.add_figure('loss vs. batches',
+            self.logger.log_image('loss vs. batches',
                                               plot_loss(losses, self.current_epoch),
                                                 global_step=self.current_epoch)
+
 
             self.backbone.eval()
             y_score = torch.tensor([]).to(device)
