@@ -1,5 +1,5 @@
 """ Helper modules for benchmarking SSL models """
-
+import numpy as np
 # Copyright (c) 2020. Lightly AG and its affiliates.
 # All Rights Reserved
 
@@ -7,6 +7,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
+from matplotlib import pyplot as plt
 from pytorch_lightning import LightningModule
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -372,6 +373,7 @@ class BenchmarkModule(LightningModule):
                 return (num, top1)
 
     def validation_epoch_end(self, outputs):
+        current_epoch = self.current_epoch
         device = self.dummy_param.device
         if outputs:
             total_num = torch.Tensor([0]).to(device)
@@ -440,6 +442,7 @@ class BenchmarkModule(LightningModule):
 
             print('Training the linear head for 10 epochs...')
             total_loss = []
+            losses = []
             for epoch in range(self.args['epochs_medmnist']):
                 scheduler.step()
                 for batch_idx, (inputs, targets, _) in tqdm(enumerate(self.dataloader_test)):
@@ -455,9 +458,22 @@ class BenchmarkModule(LightningModule):
                         targets = torch.squeeze(targets, 1).long().to(self.dummy_param.device)
                         loss = criterion(outputs, targets)
 
+                    # log the loss for current_epoch
+                    losses.append(loss.item())
                     total_loss.append(loss.item())
                     loss.backward()
                     optimizer.step()
+            def plot_loss(losses, epoch):
+                plt.figure()
+                plt.plot(losses)
+                plt.xlabel('batch')
+                plt.ylabel('loss')
+                plt.title(f'Loss vs. Batches, epoch {epoch}')
+                return plt
+            # log a plot of the loss for current_epoch using matplotlib
+            self.logger.experiment.add_figure('loss vs. batches',
+                                              plot_loss(losses, self.current_epoch),
+                                                global_step=self.current_epoch)
 
             self.backbone.eval()
             y_score = torch.tensor([]).to(device)
