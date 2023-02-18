@@ -441,7 +441,8 @@ class BenchmarkModule(LightningModule):
                 criterion = nn.CrossEntropyLoss()
 
             optimizer = torch.optim.Adam(self.backbone.head.parameters(), lr=self.args['lr_medmnist'])
-            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.args['milestones_medmnist'], gamma=self.args['gamma_medmnist'])
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.args['milestones_medmnist'],
+                                                             gamma=self.args['gamma_medmnist'])
 
             print('Training the linear head for 10 epochs...')
             total_loss = []
@@ -466,6 +467,7 @@ class BenchmarkModule(LightningModule):
                     total_loss.append(loss.item())
                     loss.backward()
                     optimizer.step()
+
             def plot_loss(losses, epoch):
                 plt.figure()
                 plt.plot(losses)
@@ -478,11 +480,11 @@ class BenchmarkModule(LightningModule):
                 buf.seek(0)
                 image = Image.open(buf)
                 return image
-            # log a plot of the loss for current_epoch using matplotlib
-            self.logger.log_image('loss vs. batches',
-                                              [plot_loss(losses, self.current_epoch)],
-                                                global_step=self.current_epoch)
 
+            # log a plot of the loss for current_epoch using matplotlib
+            self.logger.log_image(key='loss vs. batches',
+                                  images=[plot_loss(losses, self.current_epoch)]
+                                  )
 
             self.backbone.eval()
             y_score = torch.tensor([]).to(device)
