@@ -480,7 +480,7 @@ class BenchmarkModule(LightningModule):
                 return image
             # log a plot of the loss for current_epoch using matplotlib
             self.logger.log_image('loss vs. batches',
-                                              plot_loss(losses, self.current_epoch),
+                                              [plot_loss(losses, self.current_epoch)],
                                                 global_step=self.current_epoch)
 
 
