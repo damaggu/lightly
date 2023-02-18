@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-from PIL.Image import Image
+from PIL import Image
 from matplotlib import pyplot as plt
 from pytorch_lightning import LightningModule
 from torch.utils.data import DataLoader
