@@ -1,4 +1,6 @@
 """ Helper modules for benchmarking SSL models """
+import io
+
 import numpy as np
 # Copyright (c) 2020. Lightly AG and its affiliates.
 # All Rights Reserved
@@ -7,6 +9,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
+from PIL.Image import Image
 from matplotlib import pyplot as plt
 from pytorch_lightning import LightningModule
 from torch.utils.data import DataLoader
@@ -469,7 +472,12 @@ class BenchmarkModule(LightningModule):
                 plt.xlabel('batch')
                 plt.ylabel('loss')
                 plt.title(f'Loss vs. Batches, epoch {epoch}')
-                return plt
+                # plt to PIL image
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png')
+                buf.seek(0)
+                image = Image.open(buf)
+                return image
             # log a plot of the loss for current_epoch using matplotlib
             self.logger.log_image('loss vs. batches',
                                               plot_loss(losses, self.current_epoch),
