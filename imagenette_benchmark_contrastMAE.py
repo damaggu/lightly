@@ -105,7 +105,7 @@ if eli:
     val_epoch = 50
 else:
     max_epochs = 500
-    batch_size = 128
+    batch_size = 1024 if dist else 256
     val_epoch = 20
 
 lr_factor = batch_size / 256  # scales the learning rate linearly with batch size
@@ -138,7 +138,7 @@ args["do_kNN"] = False
 args["do_medmnist"] = False
 if dataset_name in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
     args["do_medmnist"] = True
-    args["tuning_batch_size"] = 512
+    args["tuning_batch_size"] = 4096 if dist else 2048
     mae_masking_ratio = 0.5
     msn_masking_ratio = 0.15
     patch_size = 2
