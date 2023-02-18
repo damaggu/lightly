@@ -123,8 +123,8 @@ byol_mode = "v0"
 # dataset_name = 'cifar10'
 # dataset_name = 'imagenette'
 # dataset_name = 'iNat2021mini'
-dataset_name = "ChestMNIST"
-# dataset_name = 'RetinaMNIST'
+# dataset_name = "ChestMNIST"
+dataset_name = 'RetinaMNIST'
 # dataset_name = 'BreastMNIST'
 project_name = dataset_name + "_benchmark_28"
 log_model = True
@@ -167,7 +167,7 @@ if dataset_name == "cifar10" or dataset_name == "imagenette":
     input_size = 128
 elif dataset_name == "iNat2021mini":
     input_size = 224
-elif dataset_name == "ChestMNIST":
+elif dataset_name in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
     # input_size = 28
     input_size = 224
 else:
@@ -332,7 +332,7 @@ elif dataset_name == "iNat2021mini":  # for now same augmentations as imagenette
             normalize_transform,
         ]
     )
-elif dataset_name in ["medmnist", "ChestMNIST"]:
+elif dataset_name in ["medmnist", "ChestMNIST", "RetinaMNIST"]:
     if input_size == 224:
         collate_fn = lightly.data.SimCLRCollateFunction(
             input_size=input_size,
@@ -426,37 +426,65 @@ elif dataset_name == "cifar10":
 elif dataset_name == "iNat2021mini":
     path_to_train = "./datasets/inat/train_mini/"
     path_to_test = "./datasets/inat/val/"
-elif dataset_name == "ChestMNIST":
+elif dataset_name in ["ChestMNIST", "RetinaMNIST"]:
     import medmnist
     import torchvision.transforms as T
 
-    root_dir_train = "./datasets/medmnist/ChestMNIST/train"
+    root_dir_train = f"./datasets/medmnist/{dataset_name}/train"
     if not os.path.exists(root_dir_train):
         os.makedirs(root_dir_train)
-    train_dataset = medmnist.ChestMNIST(
-        as_rgb=True,
-        split="train",
-        download=True,
-        root=root_dir_train,
-    )
-    root_dir_test = "./datasets/medmnist/ChestMNIST/test"
+    if dataset_name == "ChestMNIST":
+        train_dataset = medmnist.ChestMNIST(
+            as_rgb=True,
+            split="train",
+            download=True,
+            root=root_dir_train,
+        )
+    elif dataset_name == "RetinaMNIST":
+        train_dataset = medmnist.RetinaMNIST(
+            as_rgb=True,
+            split="train",
+            download=True,
+            root=root_dir_train,
+        )
+    else:
+        raise NotImplementedError
+    root_dir_test = f"./datasets/medmnist/{dataset_name}/test"
     if not os.path.exists(root_dir_test):
         os.makedirs(root_dir_test)
-    test_dataset = medmnist.ChestMNIST(
-        as_rgb=True,
-        split="test",
-        download=True,
-        root=root_dir_test,
-    )
-    root_dir_val = "./datasets/medmnist/ChestMNIST/val"
+    if dataset_name == "ChestMNIST":
+        test_dataset = medmnist.ChestMNIST(
+            as_rgb=True,
+            split="test",
+            download=True,
+            root=root_dir_test,
+        )
+    elif dataset_name == "RetinaMNIST":
+        test_dataset = medmnist.RetinaMNIST(
+            as_rgb=True,
+            split="test",
+            download=True,
+            root=root_dir_test,
+        )
+    root_dir_val = f"./datasets/medmnist/{dataset_name}/val"
     if not os.path.exists(root_dir_val):
         os.makedirs(root_dir_val)
-    val_dataset = medmnist.ChestMNIST(
-        as_rgb=True,
-        split="val",
-        download=True,
-        root=root_dir_val,
-    )
+    if dataset_name == "ChestMNIST":
+        val_dataset = medmnist.ChestMNIST(
+            as_rgb=True,
+            split="val",
+            download=True,
+            root=root_dir_val,
+        )
+    elif dataset_name == "RetinaMNIST":
+        val_dataset = medmnist.RetinaMNIST(
+            as_rgb=True,
+            split="val",
+            download=True,
+            root=root_dir_val,
+        )
+    else:
+        raise NotImplementedError
 
     dataset_train_ssl = lightly.data.LightlyDataset.from_torch_dataset(
         train_dataset,
@@ -474,7 +502,7 @@ elif dataset_name == "ChestMNIST":
 else:
     raise ValueError("Unknown dataset name")
 
-if dataset_name not in ["medmnist", "ChestMNIST"]:
+if dataset_name not in ["medmnist", "ChestMNIST", "RetinaMNIST"]:
     dataset_train_ssl = lightly.data.LightlyDataset(input_dir=path_to_train)
     dataset_train_probing = lightly.data.LightlyDataset(
         input_dir=path_to_train, transform=test_transforms
