@@ -96,8 +96,8 @@ eli = False
 dist = False
 test = True
 args = {}
-args["dataset"] = "ChestMNIST"
-args["num_workers"] = 12
+args["dataset"] = "RetinaMNIST"
+args["num_workers"] = 0
 args["memory_bank_size"] = 4096
 if eli:
     args["batch_size"] = 4096
@@ -2518,17 +2518,17 @@ class TiCoModel(BenchmarkModule):
 models = [
     # vqganMAEModel,
     # SLIPModel,
-    DINOModel,
-    BYOLModel,
-    MAEModel,
-    SwaVModel,
-    MSNModel,
-    SimMIMModel,
-    SimCLRModel,
-    TiCoModel,
-    VICRegLModel,
+    # DINOModel,
+    # BYOLModel,
+    # MAEModel,
+    # SwaVModel,
+    # MSNModel,
+    # SimMIMModel,
+    # SimCLRModel,
+    # TiCoModel,
+    # VICRegLModel,
     # vqganMAEModel,
-    # SequentialSLIPModel,
+    SequentialSLIPModel,
 ]
 bench_results = dict()
 
@@ -2701,8 +2701,7 @@ for BenchmarkModel in models:
             torch.cuda.empty_cache()
 
             wandb_logger.experiment.finish()
-            del wandb_logger
-            time.sleep(5)
+            # del wandb_logger
 
         bench_results[model_name] = runs
 
