@@ -96,7 +96,21 @@ eli = False
 dist = False
 test = True
 args = {}
-args["dataset"] = "RetinaMNIST"
+args["dataset"] = "ChestMNIST"
+
+if args["dataset"] == "cifar10" or args["dataset"] == "imagenette":
+    input_size = 128
+elif args["dataset"] == "iNat2021mini":
+    input_size = 224
+elif args["dataset"] in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
+    input_size = 28
+    # input_size = 224
+else:
+    raise ValueError("Invalid dataset name")
+
+args["input_size"] = input_size
+
+
 args["num_workers"] = 0
 args["memory_bank_size"] = 4096
 if eli:
@@ -106,13 +120,19 @@ if eli:
 else:
     args["max_epochs"] = 500
     args["val_epoch"] = 10
-    args["batch_size"] = 2048 if dist else 1024
+    if input_size == 224:
+        args["batch_size"] = 128 if dist else 64
+    else:
+        args["batch_size"] = 4096 if dist else 2048
 
 args["warmup_epochs"] = 10
 args["mae_masking_ratio"] = 0.25
 args["msn_masking_ratio"] = 0.15
 args["patch_size"] = 2
-args["ft_batch_size"] = 2048
+if input_size == 224:
+    args["ft_batch_size"] = 256 if dist else 128
+else:
+    args["ft_batch_size"] = 4096 if dist else 2048
 args["do_probing"] = False
 args["do_kNN"] = False
 args["do_medmnist"] = False
@@ -166,18 +186,6 @@ project_name = args["dataset"] + "_benchmark_28"
 log_model = True
 
 #### linear probing args
-
-if args["dataset"] == "cifar10" or args["dataset"] == "imagenette":
-    input_size = 128
-elif args["dataset"] == "iNat2021mini":
-    input_size = 224
-elif args["dataset"] in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
-    input_size = 28
-    # input_size = 224
-else:
-    raise ValueError("Invalid dataset name")
-
-args["input_size"] = input_size
 
 # Set to True to enable Distributed Data Parallel training.
 distributed = dist
