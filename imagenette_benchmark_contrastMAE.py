@@ -94,7 +94,7 @@ import wandb
 logs_root_dir = os.path.join(os.getcwd(), "benchmark_logs")
 eli = False
 dist = False
-test = False
+test = True
 args = {}
 args["dataset"] = "ChestMNIST"
 args["num_workers"] = 12
@@ -148,6 +148,8 @@ if test and not dist:
     args["max_epochs"] = 2
     args["val_epoch"] = 1
     args["warmup_epochs"] = 0
+    args["epochs_medmnist"] = 2
+    args["epochs"] = 2
 
 lr_factor = args["batch_size"] / 256  # scales the learning rate linearly with batch size
 
@@ -828,6 +830,52 @@ class SLIPModel(BenchmarkModule):
         loss = loss_clip + loss_simclr
 
         self.log("train_loss_simclr", loss_simclr)
+        self.log("train_loss_clip", loss_clip)
+        self.log("train_loss_ssl", loss)
+        return loss
+
+    def configure_optimizers(self):
+        optim = torch.optim.SGD(
+            self.parameters(), lr=6e-2 * lr_factor, momentum=0.9, weight_decay=5e-4
+        )
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, args["max_epochs"])
+        return [optim], [cosine_scheduler]
+
+
+class SequentialSLIPModel(BenchmarkModule):
+    def __init__(
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
+        # create a ResNet backbone and remove the classification head
+        resnet = torchvision.models.resnet18()
+        feature_dim = list(resnet.children())[-1].in_features
+        self.backbone = nn.Sequential(
+            *list(resnet.children())[:-1], nn.AdaptiveAvgPool2d(1)
+        )
+        self.projection_head = heads.SimCLRProjectionHead(feature_dim, feature_dim, 128)
+        self.criterion = lightly.loss.NTXentLoss(gather_distributed=gather_distributed)
+
+    def set_backbone(self, backbone):
+        self.backbone = backbone
+
+    def forward(self, x):
+        x = self.backbone(x).flatten(start_dim=1)
+        z = self.projection_head(x)
+        return z
+
+    def training_step(self, batch, batch_index):
+        (x0, x1), _, _ = batch
+
+        # clip part
+        clip_0 = CLIP_embedding(x0, self.device)
+        clip_1 = CLIP_embedding(x1, self.device)
+        loss_clip = self.criterion(clip_0, clip_1)
+
+        loss = loss_clip
+
         self.log("train_loss_clip", loss_clip)
         self.log("train_loss_ssl", loss)
         return loss
@@ -2480,6 +2528,7 @@ models = [
     TiCoModel,
     VICRegLModel,
     # vqganMAEModel,
+    # SequentialSLIPModel,
 ]
 bench_results = dict()
 
@@ -2540,6 +2589,42 @@ for BenchmarkModel in models:
                     num_classes=classes,
                     contrastive_type=contrastive_type,
                 )
+            elif 'Sequential' in model_name:
+
+                simclr_model = SimCLRModel(
+                    dataloader_train_kNN,
+                    dataloader_train_probing,
+                    dataloader_test,
+                    args=args,
+                    num_classes=classes,
+                )
+                trainer = pl.Trainer(
+                    max_epochs=args["max_epochs"],
+                    gpus=gpus,
+                    default_root_dir=logs_root_dir,
+                    strategy=distributed_backend,
+                    sync_batchnorm=sync_batchnorm,
+                    logger=wandb_logger,
+                    check_val_every_n_epoch=args["val_epoch"],
+                    # accelerator="cpu",
+                    # num_processes=0,
+                    # callbacks=[checkpoint_callback]
+                )
+                start = time.time()
+                trainer.fit(
+                    simclr_model,
+                    train_dataloaders=dataloader_train_ssl,
+                    val_dataloaders=dataloader_test,
+                )
+                benchmark_model.set_backbone(simclr_model.backbone)
+                benchmark_model = BenchmarkModel(
+                    dataloader_train_kNN,
+                    dataloader_train_probing,
+                    dataloader_test,
+                    args=args,
+                    num_classes=classes,
+                )
+
             else:
                 benchmark_model = BenchmarkModel(
                     dataloader_train_kNN,
@@ -2596,7 +2681,7 @@ for BenchmarkModel in models:
             end = time.time()
             run = {
                 "model": model_name,
-                "batch_size": batch_size,
+                "batch_size": args["batch_size"],
                 "epochs": args["max_epochs"],
                 "max_accuracy": benchmark_model.max_accuracy,
                 "runtime": end - start,
