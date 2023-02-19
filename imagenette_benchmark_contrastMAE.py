@@ -2526,17 +2526,17 @@ class TiCoModel(BenchmarkModule):
 models = [
     # vqganMAEModel,
     # SLIPModel,
-    # DINOModel,
-    # BYOLModel,
-    # MAEModel,
-    # SwaVModel,
-    # MSNModel,
-    # SimMIMModel,
-    # SimCLRModel,
-    # TiCoModel,
-    # VICRegLModel,
+    DINOModel,
+    BYOLModel,
+    MAEModel,
+    SwaVModel,
+    MSNModel,
+    SimMIMModel,
+    SimCLRModel,
+    TiCoModel,
+    VICRegLModel,
     # vqganMAEModel,
-    SequentialSLIPModel,
+    # SequentialSLIPModel,
 ]
 bench_results = dict()
 
