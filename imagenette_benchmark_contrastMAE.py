@@ -2518,17 +2518,17 @@ class TiCoModel(BenchmarkModule):
 models = [
     # vqganMAEModel,
     # SLIPModel,
-    # DINOModel,
-    # BYOLModel,
-    # MAEModel,
-    # SwaVModel,
-    # MSNModel,
-    # SimMIMModel,
-    # SimCLRModel,
-    # TiCoModel,
-    # VICRegLModel,
+    DINOModel,
+    BYOLModel,
+    MAEModel,
+    SwaVModel,
+    MSNModel,
+    SimMIMModel,
+    SimCLRModel,
+    TiCoModel,
+    VICRegLModel,
     # vqganMAEModel,
-    SequentialSLIPModel,
+    # SequentialSLIPModel,
 ]
 bench_results = dict()
 
@@ -2565,6 +2565,8 @@ for BenchmarkModel in models:
                     name=f"{model_name}--training--{seed}",
                     log_model=log_model,
                 )
+            # get every key val of args
+            wandb_logger.log_hyperparams(args)
 
             pl.seed_everything(seed)
 
@@ -2616,7 +2618,7 @@ for BenchmarkModel in models:
                     train_dataloaders=dataloader_train_ssl,
                     val_dataloaders=dataloader_test,
                 )
-                benchmark_model.set_backbone(simclr_model.backbone)
+
                 benchmark_model = BenchmarkModel(
                     dataloader_train_kNN,
                     dataloader_train_probing,
@@ -2624,6 +2626,7 @@ for BenchmarkModel in models:
                     args=args,
                     num_classes=classes,
                 )
+                benchmark_model.set_backbone(simclr_model.backbone)
 
             else:
                 benchmark_model = BenchmarkModel(
