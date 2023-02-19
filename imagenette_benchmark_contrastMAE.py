@@ -144,7 +144,7 @@ args["model_dim"] = 512
 args["is_3d"] = False
 args["min_lr"] = 0.00001
 
-if test and not dist:
+if test:
     args["max_epochs"] = 2
     args["val_epoch"] = 1
     args["warmup_epochs"] = 0
