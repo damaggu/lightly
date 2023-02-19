@@ -92,58 +92,39 @@ from PIL import Image
 import wandb
 
 logs_root_dir = os.path.join(os.getcwd(), "benchmark_logs")
-
-num_workers = 12
-memory_bank_size = 4096
-
-dist = False
 eli = False
-# set max_epochs to 800 for long run (takes around 10h on a single V100)
-if eli:
-    max_epochs = 1000
-    batch_size = 4096
-    val_epoch = 50
-else:
-    max_epochs = 500
-    batch_size = 1024 if dist else 256
-    val_epoch = 20
-
-lr_factor = batch_size / 256  # scales the learning rate linearly with batch size
-knn_k = 200
-knn_t = 0.1
-n_runs = 1  # optional, increase to create multiple runs and report mean + std
-
-mae_masking_ratio = 0.75
-msn_masking_ratio = 0.15
-patch_size = 16
-# msn_aug_mode = 'v9'
-msn_aug_mode = "v0"
-# byol_mode = 'v3'
-byol_mode = "v0"
-# dataset_name = 'cifar10'
-# dataset_name = 'imagenette'
-# dataset_name = 'iNat2021mini'
-# dataset_name = "ChestMNIST"
-dataset_name = 'RetinaMNIST'
-# dataset_name = 'BreastMNIST'
-project_name = dataset_name + "_benchmark_28"
-log_model = True
-
-
-#### linear probing args
+dist = False
 args = {}
-args["tuning_batch_size"] = 2048
+args["dataset"] = "ChestMNIST"
+args["num_workers"] = 12
+args["memory_bank_size"] = 4096
+if eli:
+    args["batch_size"] = 4096
+    args["max_epochs"] = 1000
+    args["val_epoch"] = 50
+else:
+    args["max_epochs"] = 500
+    args["val_epoch"] = 10
+    args["batch_size"] = 2048 if dist else 1024
+
+args["mae_masking_ratio"] = 0.25
+args["msn_masking_ratio"] = 0.15
+args["patch_size"] = 2
+args["ft_batch_size"] = 2048
 args["do_probing"] = False
 args["do_kNN"] = False
 args["do_medmnist"] = False
-if dataset_name in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
+args["knn_k"] = 200
+args["knn_t"] = 0.1
+args["n_runs"] = 1
+if args["dataset"] in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
     args["do_medmnist"] = True
-    args["tuning_batch_size"] = 4096 if dist else 2048
+    args["ft_batch_size"] = 8192 if dist else 4096
     mae_masking_ratio = 0.5
     msn_masking_ratio = 0.15
     patch_size = 2
 args["epochs_medmnist"] = 50
-args["lr_medmnist"] = 0.001
+args["lr_medmnist"] = 0.1
 args["gamma_medmnist"] = 0.1
 args["milestones_medmnist"] = [
     0.5 * args["epochs_medmnist"],
@@ -151,27 +132,42 @@ args["milestones_medmnist"] = [
 ]
 args["weight_decay"] = 0
 args["blr"] = 0.01
-args["lr"] = args["blr"] * args["tuning_batch_size"] / 256
-# args["lr"] = 0.1
-# args["epochs"] = 90
+args["lr"] = args["blr"] * args["ft_batch_size"] / 256
 args["epochs"] = 100
 args["clip_grad"] = 1.0
 args["accum_iter"] = 1
 args["model_dim"] = 512
-args["dataset"] = "cifar10"
 args["is_3d"] = False
 args["warmup_epochs"] = 10
 args["min_lr"] = 0.00001
 
-if dataset_name == "cifar10" or dataset_name == "imagenette":
+lr_factor = args["batch_size"] / 256  # scales the learning rate linearly with batch size
+
+# msn_aug_mode = 'v9'
+msn_aug_mode = "v0"
+# byol_mode = 'v3'
+byol_mode = "v0"
+# args["dataset"]  = 'cifar10'
+# args["dataset"]  = 'imagenette'
+# args["dataset"]  = 'iNat2021mini'
+# args["dataset"]  = 'RetinaMNIST'
+# args["dataset"]  = 'BreastMNIST'
+project_name = args["dataset"] + "_benchmark_28"
+log_model = True
+
+#### linear probing args
+
+if args["dataset"] == "cifar10" or args["dataset"] == "imagenette":
     input_size = 128
-elif dataset_name == "iNat2021mini":
+elif args["dataset"] == "iNat2021mini":
     input_size = 224
-elif dataset_name in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
-    # input_size = 28
-    input_size = 224
+elif args["dataset"] in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
+    input_size = 28
+    # input_size = 224
 else:
     raise ValueError("Invalid dataset name")
+
+args["input_size"] = input_size
 
 # Set to True to enable Distributed Data Parallel training.
 distributed = dist
@@ -196,7 +192,7 @@ gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
 if distributed:
     distributed_backend = "ddp"
     # reduce batch size for distributed training
-    batch_size = batch_size // gpus
+    batch_size = args["batch_size"] // gpus
 else:
     distributed_backend = None
     # limit to single gpu if not using distributed training
@@ -214,7 +210,7 @@ inv_normalize = torchvision.transforms.Normalize(
 )
 
 # Use SimCLR augmentations
-if dataset_name == "imagenette":
+if args["dataset"] == "imagenette":
     collate_fn = lightly.data.SimCLRCollateFunction(
         input_size=input_size,
     )
@@ -264,7 +260,7 @@ if dataset_name == "imagenette":
             normalize_transform,
         ]
     )
-elif dataset_name == "cifar10":
+elif args["dataset"] == "cifar10":
     collate_fn = lightly.data.SimCLRCollateFunction(
         input_size=32,
         gaussian_blur=0.0,
@@ -293,7 +289,7 @@ elif dataset_name == "cifar10":
         crop_min_scales=[0.2, 0.2],
         crop_max_scales=[1.0, 1.0],
     )
-elif dataset_name == "iNat2021mini":  # for now same augmentations as imagenette
+elif args["dataset"] == "iNat2021mini":  # for now same augmentations as imagenette
     collate_fn = lightly.data.SimCLRCollateFunction(
         input_size=input_size,
         gaussian_blur=0.0,  # from eli's paper
@@ -332,7 +328,7 @@ elif dataset_name == "iNat2021mini":  # for now same augmentations as imagenette
             normalize_transform,
         ]
     )
-elif dataset_name in ["medmnist", "ChestMNIST", "RetinaMNIST"]:
+elif args["dataset"] in ["medmnist", "ChestMNIST", "RetinaMNIST"]:
     if input_size == 224:
         collate_fn = lightly.data.SimCLRCollateFunction(
             input_size=input_size,
@@ -417,30 +413,30 @@ elif dataset_name in ["medmnist", "ChestMNIST", "RetinaMNIST"]:
 #  Single crop augmentation for MAE
 mae_collate_fn = lightly.data.MAECollateFunction()
 
-if dataset_name == "imagenette":
+if args["dataset"] == "imagenette":
     path_to_train = "./datasets/imagenette2-160/train/"
     path_to_test = "./datasets/imagenette2-160/val/"
-elif dataset_name == "cifar10":
+elif args["dataset"] == "cifar10":
     path_to_train = "./datasets/cifar10/train/"
     path_to_test = "./datasets/cifar10/test/"
-elif dataset_name == "iNat2021mini":
+elif args["dataset"] == "iNat2021mini":
     path_to_train = "./datasets/inat/train_mini/"
     path_to_test = "./datasets/inat/val/"
-elif dataset_name in ["ChestMNIST", "RetinaMNIST"]:
+elif args["dataset"] in ["ChestMNIST", "RetinaMNIST"]:
     import medmnist
     import torchvision.transforms as T
 
-    root_dir_train = f"./datasets/medmnist/{dataset_name}/train"
+    root_dir_train = f"./datasets/medmnist/{args['dataset']}/train"
     if not os.path.exists(root_dir_train):
         os.makedirs(root_dir_train)
-    if dataset_name == "ChestMNIST":
+    if args["dataset"] == "ChestMNIST":
         train_dataset = medmnist.ChestMNIST(
             as_rgb=True,
             split="train",
             download=True,
             root=root_dir_train,
         )
-    elif dataset_name == "RetinaMNIST":
+    elif args["dataset"] == "RetinaMNIST":
         train_dataset = medmnist.RetinaMNIST(
             as_rgb=True,
             split="train",
@@ -449,34 +445,34 @@ elif dataset_name in ["ChestMNIST", "RetinaMNIST"]:
         )
     else:
         raise NotImplementedError
-    root_dir_test = f"./datasets/medmnist/{dataset_name}/test"
+    root_dir_test = f"./datasets/medmnist/{args['dataset']}/test"
     if not os.path.exists(root_dir_test):
         os.makedirs(root_dir_test)
-    if dataset_name == "ChestMNIST":
+    if args["dataset"] == "ChestMNIST":
         test_dataset = medmnist.ChestMNIST(
             as_rgb=True,
             split="test",
             download=True,
             root=root_dir_test,
         )
-    elif dataset_name == "RetinaMNIST":
+    elif args["dataset"] == "RetinaMNIST":
         test_dataset = medmnist.RetinaMNIST(
             as_rgb=True,
             split="test",
             download=True,
             root=root_dir_test,
         )
-    root_dir_val = f"./datasets/medmnist/{dataset_name}/val"
+    root_dir_val = f"./datasets/medmnist/{args['dataset']}/val"
     if not os.path.exists(root_dir_val):
         os.makedirs(root_dir_val)
-    if dataset_name == "ChestMNIST":
+    if args["dataset"] == "ChestMNIST":
         val_dataset = medmnist.ChestMNIST(
             as_rgb=True,
             split="val",
             download=True,
             root=root_dir_val,
         )
-    elif dataset_name == "RetinaMNIST":
+    elif args["dataset"] == "RetinaMNIST":
         val_dataset = medmnist.RetinaMNIST(
             as_rgb=True,
             split="val",
@@ -502,7 +498,7 @@ elif dataset_name in ["ChestMNIST", "RetinaMNIST"]:
 else:
     raise ValueError("Unknown dataset name")
 
-if dataset_name not in ["medmnist", "ChestMNIST", "RetinaMNIST"]:
+if args["dataset"] not in ["medmnist", "ChestMNIST", "RetinaMNIST"]:
     dataset_train_ssl = lightly.data.LightlyDataset(input_dir=path_to_train)
     dataset_train_probing = lightly.data.LightlyDataset(
         input_dir=path_to_train, transform=test_transforms
@@ -542,11 +538,11 @@ def show_image(s, im=0, inv_normalize=False, times_255=False):
 
 
 def get_data_loaders(
-    batch_size_train_ssl: int,
-    batch_size_train_probing: int,
-    batch_size_train_kNN: int,
-    batch_size_test: int,
-    model,
+        batch_size_train_ssl: int,
+        batch_size_train_probing: int,
+        batch_size_train_kNN: int,
+        batch_size_test: int,
+        model,
 ):
     """Helper method to create dataloaders for ssl, kNN train and kNN test
 
@@ -576,7 +572,7 @@ def get_data_loaders(
         shuffle=True,
         collate_fn=col_fn,
         drop_last=True,
-        num_workers=num_workers,
+        num_workers=args["num_workers"],
     )
     dataloader_train_probing = torch.utils.data.DataLoader(
         dataset_train_probing,
@@ -585,7 +581,7 @@ def get_data_loaders(
         # collate_fn=col_fn,
         collate_fn=None,
         drop_last=True,
-        num_workers=num_workers,
+        num_workers=args["num_workers"],
     )
 
     dataloader_train_kNN = torch.utils.data.DataLoader(
@@ -593,7 +589,7 @@ def get_data_loaders(
         batch_size=batch_size_train_kNN,
         shuffle=False,
         drop_last=False,
-        num_workers=num_workers,
+        num_workers=args["num_workers"],
         collate_fn=None,
     )
 
@@ -602,15 +598,15 @@ def get_data_loaders(
         batch_size=batch_size_test,
         shuffle=False,
         drop_last=False,
-        num_workers=num_workers,
+        num_workers=args["num_workers"],
         collate_fn=None,
     )
 
     return (
         dataloader_train_ssl,
+        dataloader_train_probing,
         dataloader_train_kNN,
         dataloader_test,
-        dataloader_train_probing,
     )
 
 
@@ -668,7 +664,7 @@ class MocoModel(BenchmarkModule):
 
         # create our loss with the optional memory bank
         self.criterion = lightly.loss.NTXentLoss(
-            temperature=0.1, memory_bank_size=memory_bank_size
+            temperature=0.1, memory_bank_size=args["memory_bank_size"]
         )
 
     def forward(self, x):
@@ -711,13 +707,13 @@ class MocoModel(BenchmarkModule):
             momentum=0.9,
             weight_decay=5e-4,
         )
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, args["max_epochs"])
         return [optim], [cosine_scheduler]
 
 
 class SimCLRModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -754,11 +750,11 @@ class SimCLRModel(BenchmarkModule):
         if eli:
             self.warmup_epochs = 10
             cosine_scheduler = scheduler.CosineWarmupScheduler(
-                optim, self.warmup_epochs, max_epochs
+                optim, self.warmup_epochs, args["max_epochs"]
             )
         else:
             cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optim, max_epochs
+                optim, args["max_epochs"]
             )
         return [optim], [cosine_scheduler]
 
@@ -770,7 +766,7 @@ def CLIP_embedding(frames, device, batch_size=64):
     res = []
     with torch.no_grad():
         for i in range(0, len(frames), batch_size):
-            batch = frames[i : i + batch_size]
+            batch = frames[i: i + batch_size]
             inputs = processor(
                 text=["a"] * len(batch),
                 images=[a for a in batch],
@@ -789,7 +785,7 @@ def CLIP_embedding(frames, device, batch_size=64):
 
 class SLIPModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -832,13 +828,13 @@ class SLIPModel(BenchmarkModule):
         optim = torch.optim.SGD(
             self.parameters(), lr=6e-2 * lr_factor, momentum=0.9, weight_decay=5e-4
         )
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, args["max_epochs"])
         return [optim], [cosine_scheduler]
 
 
 class SimSiamModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -875,13 +871,13 @@ class SimSiamModel(BenchmarkModule):
             momentum=0.9,
             weight_decay=5e-4,
         )
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, args["max_epochs"])
         return [optim], [cosine_scheduler]
 
 
 class BarlowTwinsModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -916,13 +912,13 @@ class BarlowTwinsModel(BenchmarkModule):
         optim = torch.optim.SGD(
             self.parameters(), lr=6e-2 * lr_factor, momentum=0.9, weight_decay=5e-4
         )
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, args["max_epochs"])
         return [optim], [cosine_scheduler]
 
 
 class BYOLModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -983,22 +979,22 @@ class BYOLModel(BenchmarkModule):
             x0_clip = self.clip_model.encode_image(x0)
             x1_clip = self.clip_model.encode_image(x1)
             loss += (
-                0.5 * (self.criterion(py0, x1_clip) + self.criterion(py1, x0_clip))
-            ) * 0.1
+                            0.5 * (self.criterion(py0, x1_clip) + self.criterion(py1, x0_clip))
+                    ) * 0.1
         if byol_mode == "v3":
             x0_clip = self.clip_model.encode_image(x0)
             x1_clip = self.clip_model.encode_image(x1)
             loss += (
-                0.5 * (self.criterion(py0, x0_clip) + self.criterion(py1, x1_clip))
-            ) * 0.1
+                            0.5 * (self.criterion(py0, x0_clip) + self.criterion(py1, x1_clip))
+                    ) * 0.1
         self.log("train_loss_ssl", loss)
         return loss
 
     def configure_optimizers(self):
         params = (
-            list(self.backbone.parameters())
-            + list(self.projection_head.parameters())
-            + list(self.prediction_head.parameters())
+                list(self.backbone.parameters())
+                + list(self.projection_head.parameters())
+                + list(self.prediction_head.parameters())
         )
         optim = torch.optim.SGD(
             params,
@@ -1006,13 +1002,13 @@ class BYOLModel(BenchmarkModule):
             momentum=0.9,
             weight_decay=5e-4,
         )
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, args["max_epochs"])
         return [optim], [cosine_scheduler]
 
 
 class NNCLRModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -1052,13 +1048,13 @@ class NNCLRModel(BenchmarkModule):
             momentum=0.9,
             weight_decay=5e-4,
         )
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, args["max_epochs"])
         return [optim], [cosine_scheduler]
 
 
 class SwaVModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -1109,18 +1105,21 @@ class SwaVModel(BenchmarkModule):
             lr=1e-3 * lr_factor,
             weight_decay=1e-6,
         )
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, args["max_epochs"])
         return [optim], [cosine_scheduler]
 
 
 class DINOModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
         )
         # create a ResNet backbone and remove the classification head
+        # resnet = torchvision.models.resnet18(pretrained=False)
+        # pretrained resnet 18
+        # resnet = torchvision.models.resnet18(pretrained=False)
         resnet = torchvision.models.resnet18()
         feature_dim = list(resnet.children())[-1].in_features
         self.backbone = nn.Sequential(
@@ -1169,13 +1168,13 @@ class DINOModel(BenchmarkModule):
             momentum=0.9,
             weight_decay=5e-4,
         )
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, args["max_epochs"])
         return [optim], [cosine_scheduler]
 
 
 class DCL(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -1206,13 +1205,13 @@ class DCL(BenchmarkModule):
         optim = torch.optim.SGD(
             self.parameters(), lr=6e-2 * lr_factor, momentum=0.9, weight_decay=5e-4
         )
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, args["max_epochs"])
         return [optim], [cosine_scheduler]
 
 
 class DCLW(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -1243,7 +1242,7 @@ class DCLW(BenchmarkModule):
         optim = torch.optim.SGD(
             self.parameters(), lr=6e-2 * lr_factor, momentum=0.9, weight_decay=5e-4
         )
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, args["max_epochs"])
         return [optim], [cosine_scheduler]
 
 
@@ -1264,7 +1263,7 @@ class DCLW(BenchmarkModule):
 #                     weights=None,
 #         )
 #
-#         self.warmup_epochs = 40 if max_epochs >= 800 else 20
+#         self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
 #         self.mask_ratio = masking_ratio
 #         # self.patch_size = vit.patch_size
 #         # self.patch_size = patch_size
@@ -1341,12 +1340,12 @@ class DCLW(BenchmarkModule):
 #         if epoch < self.warmup_epochs:
 #             return epoch / self.warmup_epochs
 #         else:
-#             return 0.5 * (1. + math.cos(math.pi * (epoch - self.warmup_epochs) / (max_epochs - self.warmup_epochs)))
+#             return 0.5 * (1. + math.cos(math.pi * (epoch - self.warmup_epochs) / (args["max_epochs"] - self.warmup_epochs)))
 
 
 class MAEModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -1355,7 +1354,7 @@ class MAEModel(BenchmarkModule):
         decoder_dim = 512
         vit = torchvision.models.vit_b_32(pretrained=False)
 
-        self.warmup_epochs = 40 if max_epochs >= 800 else 20
+        self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
         self.mask_ratio = mae_masking_ratio
         self.patch_size = patch_size
         self.sequence_length = vit.seq_length
@@ -1376,7 +1375,7 @@ class MAEModel(BenchmarkModule):
             embed_input_dim=384,
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
-            out_dim=vit.patch_size**2 * 3,
+            out_dim=vit.patch_size ** 2 * 3,
             dropout=0,
             attention_dropout=0,
         )
@@ -1431,14 +1430,14 @@ class MAEModel(BenchmarkModule):
             betas=(0.9, 0.95),
         )
         cosine_scheduler = scheduler.CosineWarmupScheduler(
-            optim, self.warmup_epochs, max_epochs
+            optim, self.warmup_epochs, args["max_epochs"]
         )
         return [optim], [cosine_scheduler]
 
 
 class vqganMAEModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -1447,7 +1446,7 @@ class vqganMAEModel(BenchmarkModule):
         decoder_dim = 512
         vit = torchvision.models.vit_b_32(pretrained=False)
 
-        self.warmup_epochs = 40 if max_epochs >= 800 else 20
+        self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
         # self.mask_ratio = 0.75
         self.mask_ratio = 0.25
         # self.patch_size = vit.patch_size
@@ -1473,7 +1472,7 @@ class vqganMAEModel(BenchmarkModule):
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
             # out_dim=self.patch_size ** 2 * 3,
-            out_dim=self.patch_size**2 * 256,
+            out_dim=self.patch_size ** 2 * 256,
             dropout=0,
             attention_dropout=0,
         )
@@ -1525,7 +1524,7 @@ class vqganMAEModel(BenchmarkModule):
         codes = []
         for i in range(0, images.shape[0], self.vqgan_batch_size):
             quant, emb_loss, info = self.vqganmodel.encode(
-                images[i : i + self.vqgan_batch_size]
+                images[i: i + self.vqgan_batch_size]
             )
             codes.append(quant)
         codes = torch.cat(codes, dim=0)
@@ -1566,7 +1565,7 @@ class vqganMAEModel(BenchmarkModule):
             betas=(0.9, 0.95),
         )
         cosine_scheduler = scheduler.CosineWarmupScheduler(
-            optim, self.warmup_epochs, max_epochs
+            optim, self.warmup_epochs, args["max_epochs"]
         )
         return [optim], [cosine_scheduler]
 
@@ -1578,7 +1577,7 @@ class contrastMAEModel(BenchmarkModule):
         decoder_dim = 512
         vit = torchvision.models.vit_b_32(pretrained=False)
 
-        self.warmup_epochs = 40 if max_epochs >= 800 else 20
+        self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
         self.mask_ratio = 0.75
         self.patch_size = vit.patch_size
         self.sequence_length = vit.seq_length
@@ -1591,7 +1590,7 @@ class contrastMAEModel(BenchmarkModule):
             embed_input_dim=vit.hidden_dim,
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
-            out_dim=vit.patch_size**2 * 3,
+            out_dim=vit.patch_size ** 2 * 3,
             dropout=0,
             attention_dropout=0,
         )
@@ -1630,7 +1629,7 @@ class contrastMAEModel(BenchmarkModule):
 
             # create our loss with the optional memory bank
             self.contrastive_criterion = lightly.loss.NTXentLoss(
-                temperature=0.1, memory_bank_size=memory_bank_size
+                temperature=0.1, memory_bank_size=args["memory_bank_size"]
             )
         else:
             raise NotImplementedError
@@ -1677,7 +1676,7 @@ class contrastMAEModel(BenchmarkModule):
             ).detach()
 
             loss_contrastive = 0.5 * (
-                self.contrastive_criterion(p0, z1) + self.contrastive_criterion(p1, z0)
+                    self.contrastive_criterion(p0, z1) + self.contrastive_criterion(p1, z0)
             )
             # x_encoded = self.forward_encoder(x)
             # x_encoded = self.projection_head(x_encoded)
@@ -1765,12 +1764,12 @@ class contrastMAEModel(BenchmarkModule):
             return epoch / self.warmup_epochs
         else:
             return 0.5 * (
-                1.0
-                + math.cos(
-                    math.pi
-                    * (epoch - self.warmup_epochs)
-                    / (max_epochs - self.warmup_epochs)
-                )
+                    1.0
+                    + math.cos(
+                math.pi
+                * (epoch - self.warmup_epochs)
+                / (args["max_epochs"] - self.warmup_epochs)
+            )
             )
 
 
@@ -2007,11 +2006,11 @@ class contrastMAEModel(BenchmarkModule):
 #             weight_decay=0.05,
 #             betas=(0.9, 0.95),
 #         )
-#         cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, max_epochs)
+#         cosine_scheduler = scheduler.CosineWarmupScheduler(optim, self.warmup_epochs, args["max_epochs"])
 #         return [optim], [cosine_scheduler]
 class MSNModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -2083,7 +2082,7 @@ class MSNModel(BenchmarkModule):
             betas=(0.9, 0.95),
         )
         cosine_scheduler = scheduler.CosineWarmupScheduler(
-            optim, self.warmup_epochs, max_epochs
+            optim, self.warmup_epochs, args["max_epochs"]
         )
         return [optim], [cosine_scheduler]
 
@@ -2093,7 +2092,7 @@ from sklearn.cluster import KMeans
 
 class SMoGModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -2184,9 +2183,9 @@ class SMoGModel(BenchmarkModule):
 
     def configure_optimizers(self):
         params = (
-            list(self.backbone.parameters())
-            + list(self.projection_head.parameters())
-            + list(self.prediction_head.parameters())
+                list(self.backbone.parameters())
+                + list(self.projection_head.parameters())
+                + list(self.prediction_head.parameters())
         )
         optim = torch.optim.SGD(
             params,
@@ -2194,20 +2193,20 @@ class SMoGModel(BenchmarkModule):
             momentum=0.9,
             weight_decay=1e-6,
         )
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, max_epochs)
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, args["max_epochs"])
         return [optim], [cosine_scheduler]
 
 
 class SimMIMModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
         )
 
         vit = torchvision.models.vit_b_32(pretrained=False)
-        self.warmup_epochs = 40 if max_epochs >= 800 else 20
+        self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
         decoder_dim = vit.hidden_dim
         self.mask_ratio = mae_masking_ratio
         self.patch_size = patch_size
@@ -2225,7 +2224,7 @@ class SimMIMModel(BenchmarkModule):
         )
 
         # the decoder is a simple linear layer
-        self.decoder = nn.Linear(vit.hidden_dim, self.patch_size**2 * 3)
+        self.decoder = nn.Linear(vit.hidden_dim, self.patch_size ** 2 * 3)
 
         # L1 loss as paper suggestion
         self.criterion = nn.L1Loss()
@@ -2273,14 +2272,14 @@ class SimMIMModel(BenchmarkModule):
             betas=(0.9, 0.999),
         )
         cosine_scheduler = scheduler.CosineWarmupScheduler(
-            optim, self.warmup_epochs, max_epochs
+            optim, self.warmup_epochs, args["max_epochs"]
         )
         return [optim], [cosine_scheduler]
 
 
 class VICRegModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -2290,7 +2289,7 @@ class VICRegModel(BenchmarkModule):
         self.backbone = nn.Sequential(*list(resnet.children())[:-1])
         self.projection_head = heads.BarlowTwinsProjectionHead(512, 2048, 2048)
         self.criterion = lightly.loss.VICRegLoss()
-        self.warmup_epochs = 40 if max_epochs >= 800 else 20
+        self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
 
     def forward(self, x):
         x = self.backbone(x).flatten(start_dim=1)
@@ -2313,14 +2312,14 @@ class VICRegModel(BenchmarkModule):
             momentum=0.9,
         )
         cosine_scheduler = scheduler.CosineWarmupScheduler(
-            optim, self.warmup_epochs, max_epochs
+            optim, self.warmup_epochs, args["max_epochs"]
         )
         return [optim], [cosine_scheduler]
 
 
 class VICRegLModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -2338,7 +2337,7 @@ class VICRegLModel(BenchmarkModule):
         self.average_pool = nn.AdaptiveAvgPool2d(output_size=(1, 1))
         self.criterion = lightly.loss.VICRegLLoss(alpha=0.75, num_matches=(16, 4))
         self.backbone = nn.Sequential(self.train_backbone, self.average_pool)
-        self.warmup_epochs = 40 if max_epochs >= 800 else 20
+        self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
 
     def forward(self, x):
         x = self.train_backbone(x)
@@ -2371,14 +2370,14 @@ class VICRegLModel(BenchmarkModule):
             momentum=0.9,
         )
         cosine_scheduler = scheduler.CosineWarmupScheduler(
-            optim, self.warmup_epochs, max_epochs
+            optim, self.warmup_epochs, args["max_epochs"]
         )
         return [optim], [cosine_scheduler]
 
 
 class TiCoModel(BenchmarkModule):
     def __init__(
-        self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
     ):
         super().__init__(
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -2395,7 +2394,7 @@ class TiCoModel(BenchmarkModule):
         utils.deactivate_requires_grad(self.projection_head_momentum)
 
         self.criterion = lightly.loss.TiCoLoss()
-        self.warmup_epochs = 40 if max_epochs >= 800 else 20
+        self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
 
     def forward(self, x):
         y = self.backbone(x).flatten(start_dim=1)
@@ -2430,7 +2429,7 @@ class TiCoModel(BenchmarkModule):
             momentum=0.9,
         )
         cosine_scheduler = scheduler.CosineWarmupScheduler(
-            optim, self.warmup_epochs, max_epochs
+            optim, self.warmup_epochs, args["max_epochs"]
         )
         return [optim], [cosine_scheduler]
 
@@ -2494,12 +2493,12 @@ for BenchmarkModel in models:
 
         if "contrast" in model_name:
             model_name = model_name + contrastive_type
-        for seed in range(n_runs):
+        for seed in range(args["n_runs"]):
             if "MSN" in model_name:
                 wandb_logger = WandbLogger(
                     project=project_name,
                     entity="maggu",
-                    name=f"{model_name}--_{msn_aug_mode}_224_{masking_ratio}_training--{seed}",
+                    name=f"{model_name}--_{msn_aug_mode}_224_{args['msn_masking_ratio']}_training--{seed}",
                     log_model=log_model,
                 )
             else:
@@ -2514,14 +2513,14 @@ for BenchmarkModel in models:
 
             (
                 dataloader_train_ssl,
+                dataloader_train_probing,
                 dataloader_train_kNN,
                 dataloader_test,
-                dataloader_train_probing,
             ) = get_data_loaders(
-                batch_size_train_ssl=batch_size,
-                batch_size_train_kNN=batch_size,
-                batch_size_train_probing=args["tuning_batch_size"],
-                batch_size_test=args["tuning_batch_size"],
+                batch_size_train_ssl=args["batch_size"],
+                batch_size_train_kNN=args["ft_batch_size"],
+                batch_size_train_probing=args["ft_batch_size"],
+                batch_size_test=args["ft_batch_size"],
                 model=BenchmarkModel,
             )
             if "contrast" in model_name:
@@ -2544,9 +2543,9 @@ for BenchmarkModel in models:
 
             # Save logs to: {CWD}/benchmark_logs/cifar10/{experiment_version}/{model_name}/
             # If multiple runs are specified a subdirectory for each run is created.
-            sub_dir = model_name if n_runs <= 1 else f"{model_name}/run{seed}"
+            sub_dir = model_name if args["n_runs"] <= 1 else f"{model_name}/run{seed}"
             # logger = TensorBoardLogger(
-            #     save_dir=os.path.join(logs_root_dir, dataset_name),
+            #     save_dir=os.path.join(logs_root_dir, args["dataset"] ),
             #     name='',
             #     sub_dir=sub_dir,
             #     version=experiment_version,
@@ -2561,20 +2560,20 @@ for BenchmarkModel in models:
             wandb_logger.watch(benchmark_model, log_graph=False, log="all", log_freq=5)
 
             # trainer = pl.Trainer(
-            #     max_epochs=max_epochs,
+            #     args["max_epochs"]=args["max_epochs"],
             #     accelerator="cpu",
             #     default_root_dir=logs_root_dir,
             #     strategy="dp",
             #     num_processes=0,
             # )
             trainer = pl.Trainer(
-                max_epochs=max_epochs,
+                max_epochs=args["max_epochs"],
                 gpus=gpus,
                 default_root_dir=logs_root_dir,
                 strategy=distributed_backend,
                 sync_batchnorm=sync_batchnorm,
                 logger=wandb_logger,
-                check_val_every_n_epoch=val_epoch,
+                check_val_every_n_epoch=args["val_epoch"],
                 # accelerator="cpu",
                 # num_processes=0,
                 # callbacks=[checkpoint_callback]
@@ -2590,7 +2589,7 @@ for BenchmarkModel in models:
             run = {
                 "model": model_name,
                 "batch_size": batch_size,
-                "epochs": max_epochs,
+                "epochs": args["max_epochs"],
                 "max_accuracy": benchmark_model.max_accuracy,
                 "runtime": end - start,
                 "gpu_memory_usage": torch.cuda.max_memory_allocated(),
@@ -2610,7 +2609,6 @@ for BenchmarkModel in models:
             time.sleep(5)
 
         bench_results[model_name] = runs
-
 
 if False:
     #  print results table
@@ -2638,7 +2636,7 @@ if False:
         runtime = runtime.mean() / 60  # convert to min
         accuracy = np.array([result["max_accuracy"] for result in results])
         gpu_memory_usage = np.array([result["gpu_memory_usage"] for result in results])
-        gpu_memory_usage = gpu_memory_usage.max() / (1024**3)  #  convert to gbyte
+        gpu_memory_usage = gpu_memory_usage.max() / (1024 ** 3)  #  convert to gbyte
 
         if len(accuracy) > 1:
             accuracy_msg = f"{accuracy.mean():>8.3f} +- {accuracy.std():>4.3f}"
