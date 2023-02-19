@@ -94,6 +94,7 @@ import wandb
 logs_root_dir = os.path.join(os.getcwd(), "benchmark_logs")
 eli = False
 dist = False
+test = False
 args = {}
 args["dataset"] = "ChestMNIST"
 args["num_workers"] = 12
@@ -107,6 +108,7 @@ else:
     args["val_epoch"] = 10
     args["batch_size"] = 2048 if dist else 1024
 
+args["warmup_epochs"] = 10
 args["mae_masking_ratio"] = 0.25
 args["msn_masking_ratio"] = 0.15
 args["patch_size"] = 2
@@ -120,6 +122,8 @@ args["n_runs"] = 1
 if args["dataset"] in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
     args["do_medmnist"] = True
     args["ft_batch_size"] = 8192 if dist else 4096
+    args["max_epochs"] = 50
+    args["val_epoch"] = 5
     # mae_masking_ratio = 0.5
     # msn_masking_ratio = 0.15
     # patch_size = 2
@@ -138,8 +142,12 @@ args["clip_grad"] = 1.0
 args["accum_iter"] = 1
 args["model_dim"] = 512
 args["is_3d"] = False
-args["warmup_epochs"] = 10
 args["min_lr"] = 0.00001
+
+if test and not dist:
+    args["max_epochs"] = 2
+    args["val_epoch"] = 1
+    args["warmup_epochs"] = 0
 
 lr_factor = args["batch_size"] / 256  # scales the learning rate linearly with batch size
 
@@ -2464,10 +2472,10 @@ models = [
     # SLIPModel,
     DINOModel,
     BYOLModel,
+    MAEModel,
     SwaVModel,
     MSNModel,
     SimMIMModel,
-    MAEModel,
     SimCLRModel,
     TiCoModel,
     VICRegLModel,
