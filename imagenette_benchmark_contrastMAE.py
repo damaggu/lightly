@@ -120,9 +120,9 @@ args["n_runs"] = 1
 if args["dataset"] in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
     args["do_medmnist"] = True
     args["ft_batch_size"] = 8192 if dist else 4096
-    mae_masking_ratio = 0.5
-    msn_masking_ratio = 0.15
-    patch_size = 2
+    # mae_masking_ratio = 0.5
+    # msn_masking_ratio = 0.15
+    # patch_size = 2
 args["epochs_medmnist"] = 50
 args["lr_medmnist"] = 0.1
 args["gamma_medmnist"] = 0.1
