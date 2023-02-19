@@ -449,7 +449,7 @@ class BenchmarkModule(LightningModule):
             losses = []
             for epoch in range(self.args['epochs_medmnist']):
                 scheduler.step()
-                for batch_idx, (inputs, targets, _) in tqdm(enumerate(self.dataloader_test)):
+                for batch_idx, (inputs, targets, _) in tqdm(enumerate(self.dataloader_train_ssl)):
                     optimizer.zero_grad()
                     inputs = inputs.to(self.dummy_param.device)
                     outputs = self.backbone(inputs).squeeze()
@@ -519,4 +519,13 @@ class BenchmarkModule(LightningModule):
                 p.requires_grad = True
             torch.set_grad_enabled(False)
             del self.backbone.head
+
+            # if the backbone is a vit model, we visualize the attention maps
+            if self.backbone.__class__.__name__ == 'VisionTransformer':
+                self.backbone.eval()
+                for batch_idx, (inputs, targets, _) in enumerate(self.dataloader_test):
+                    inputs = inputs.to(self.dummy_param.device)
+                    outputs = self.backbone(inputs)
+                    break
+
             self.backbone.train()
