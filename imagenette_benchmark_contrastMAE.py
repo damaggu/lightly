@@ -1411,8 +1411,8 @@ class MAEModel(BenchmarkModule):
         vit = torchvision.models.vit_b_32(pretrained=False)
 
         self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
-        self.mask_ratio = mae_masking_ratio
-        self.patch_size = patch_size
+        self.mask_ratio = args["mae_masking_ratio"]
+        self.patch_size = args["patch_size"]
         self.sequence_length = vit.seq_length
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
         # self.backbone = masked_autoencoder.MAEBackbone.from_vit(vit)
@@ -2074,10 +2074,10 @@ class MSNModel(BenchmarkModule):
 
         self.warmup_epochs = 15
         # ViT small configuration (ViT-S/16)
-        self.mask_ratio = msn_masking_ratio
+        self.mask_ratio = args["msn_mask_ratio"]
         self.backbone = masked_autoencoder.MAEBackbone(
             image_size=input_size,
-            patch_size=patch_size,
+            patch_size=args["patch_size"],
             num_layers=12,
             num_heads=6,
             hidden_dim=384,
@@ -2264,8 +2264,8 @@ class SimMIMModel(BenchmarkModule):
         vit = torchvision.models.vit_b_32(pretrained=False)
         self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
         decoder_dim = vit.hidden_dim
-        self.mask_ratio = mae_masking_ratio
-        self.patch_size = patch_size
+        self.mask_ratio = args["mae_masking_ratio"]
+        self.patch_size = args["patch_size"]
         self.sequence_length = vit.seq_length
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
 
@@ -2518,17 +2518,17 @@ class TiCoModel(BenchmarkModule):
 models = [
     # vqganMAEModel,
     # SLIPModel,
-    DINOModel,
-    BYOLModel,
-    MAEModel,
-    SwaVModel,
-    MSNModel,
-    SimMIMModel,
-    SimCLRModel,
-    TiCoModel,
-    VICRegLModel,
+    # DINOModel,
+    # BYOLModel,
+    # MAEModel,
+    # SwaVModel,
+    # MSNModel,
+    # SimMIMModel,
+    # SimCLRModel,
+    # TiCoModel,
+    # VICRegLModel,
     # vqganMAEModel,
-    # SequentialSLIPModel,
+    SequentialSLIPModel,
 ]
 bench_results = dict()
 
