@@ -125,19 +125,23 @@ else:
     else:
         args["batch_size"] = 4096 if dist else 2048
 
+if input_size == 224:
+    args["ft_batch_size"] = 256 if dist else 128
+else:
+    args["ft_batch_size"] = 4096 if dist else 2048
+
+
 gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
 if dist:
     args["gpus"] = gpus
     args['batch_size'] = args['batch_size'] * gpus
+    args['ft_batch_size'] = args['ft_batch_size'] * gpus
+
 
 args["warmup_epochs"] = 10
 args["mae_masking_ratio"] = 0.50
 args["msn_masking_ratio"] = 0.15
 args["patch_size"] = 4
-if input_size == 224:
-    args["ft_batch_size"] = 256 if dist else 128
-else:
-    args["ft_batch_size"] = 4096 if dist else 2048
 args["do_probing"] = True
 args["do_kNN"] = True
 args["do_medmnist"] = False
