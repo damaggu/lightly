@@ -84,6 +84,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             if addition_model:
                 samples = addition_model.images_to_codes(samples)
             outputs = model(samples)
+            if model._get_name() == "MAEBackbone":
+                outputs = model.head(outputs)
             loss = criterion(outputs, targets)
 
         loss_value = loss.item()
@@ -95,7 +97,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         loss /= accum_iter
         #TODO: double check commented line
         loss_scaler(loss, optimizer, clip_grad=max_norm,
-                    parameters=model.parameters(), create_graph=False,
+                    # parameters=model.parameters(), create_graph=False,
+                    parameters=model.head.parameters(), create_graph=True,
                     # update_grad=(data_iter_step + 1) % accum_iter == 0
                     )
         if (data_iter_step + 1) % accum_iter == 0:
@@ -169,6 +172,8 @@ def evaluate(data_loader, model, device, args, transform=None, addition_model=No
             if addition_model:
                 images = addition_model.images_to_codes(images)
             output = model(images)
+            if model._get_name() == "MAEBackbone":
+                output = model.head(output)
             loss = criterion(output, target)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))

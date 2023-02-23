@@ -96,22 +96,22 @@ eli = False
 dist = False
 test = True
 args = {}
-args["dataset"] = "ChestMNIST"
+args["dataset"] = "imagenette"
 
 if args["dataset"] == "cifar10" or args["dataset"] == "imagenette":
-    input_size = 128
+    # input_size = 128
+    input_size = 224
 elif args["dataset"] == "iNat2021mini":
     input_size = 224
 elif args["dataset"] in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
-    input_size = 28
-    # input_size = 224
+    # input_size = 28
+    input_size = 224
 else:
     raise ValueError("Invalid dataset name")
 
 args["input_size"] = input_size
-
-
-args["num_workers"] = 0
+args['flatten'] = True
+args["num_workers"] = 8
 args["memory_bank_size"] = 4096
 if eli:
     args["batch_size"] = 4096
@@ -126,15 +126,15 @@ else:
         args["batch_size"] = 4096 if dist else 2048
 
 args["warmup_epochs"] = 10
-args["mae_masking_ratio"] = 0.25
+args["mae_masking_ratio"] = 0.50
 args["msn_masking_ratio"] = 0.15
-args["patch_size"] = 2
+args["patch_size"] = 4
 if input_size == 224:
     args["ft_batch_size"] = 256 if dist else 128
 else:
     args["ft_batch_size"] = 4096 if dist else 2048
-args["do_probing"] = False
-args["do_kNN"] = False
+args["do_probing"] = True
+args["do_kNN"] = True
 args["do_medmnist"] = False
 args["knn_k"] = 200
 args["knn_t"] = 0.1
@@ -155,7 +155,7 @@ args["milestones_medmnist"] = [
     0.75 * args["epochs_medmnist"],
 ]
 args["weight_decay"] = 0
-args["blr"] = 0.01
+args["blr"] = 0.1
 args["lr"] = args["blr"] * args["ft_batch_size"] / 256
 args["epochs"] = 100
 args["clip_grad"] = 1.0
@@ -165,11 +165,22 @@ args["is_3d"] = False
 args["min_lr"] = 0.00001
 
 if test:
+    args["num_workers"] = 0
     args["max_epochs"] = 2
     args["val_epoch"] = 1
     args["warmup_epochs"] = 0
     args["epochs_medmnist"] = 2
     args["epochs"] = 2
+    if input_size == 28:
+        args["batch_size"] = 16
+        args["ft_batch_size"] = 1024
+    else:
+        args["batch_size"] = 2
+        args["ft_batch_size"] = 2
+        args["mae_masking_ratio"] = 0.95
+        # args["model_dim"] = 384
+        args["model_dim"] = 512
+        args["patch_size"] = 16
 
 lr_factor = args["batch_size"] / 256  # scales the learning rate linearly with batch size
 
@@ -229,55 +240,99 @@ inv_normalize = torchvision.transforms.Normalize(
 
 # Use SimCLR augmentations
 if args["dataset"] == "imagenette":
-    collate_fn = lightly.data.SimCLRCollateFunction(
-        input_size=input_size,
-    )
-    if byol_mode == "v1" or byol_mode == "v2" or byol_mode == "v3":
-        # import Normalize from torchvision transforms
+
+    if input_size == 128:
         collate_fn = lightly.data.SimCLRCollateFunction(
             input_size=input_size,
-            normalize={
-                "mean": (0.48145466, 0.4578275, 0.40821073),
-                "std": (0.26862954, 0.26130258, 0.27577711),
-            },
+        )
+        if byol_mode == "v1" or byol_mode == "v2" or byol_mode == "v3":
+            # import Normalize from torchvision transforms
+            collate_fn = lightly.data.SimCLRCollateFunction(
+                input_size=input_size,
+                normalize={
+                    "mean": (0.48145466, 0.4578275, 0.40821073),
+                    "std": (0.26862954, 0.26130258, 0.27577711),
+                },
+            )
+
+        # Multi crop augmentation for SwAV
+        swav_collate_fn = lightly.data.SwaVCollateFunction(
+            crop_sizes=[128, 64],
+            crop_counts=[2, 6],  # 2 crops @ 128x128px and 6 crops @ 64x64px
         )
 
-    # Multi crop augmentation for SwAV
-    swav_collate_fn = lightly.data.SwaVCollateFunction(
-        crop_sizes=[128, 64],
-        crop_counts=[2, 6],  # 2 crops @ 128x128px and 6 crops @ 64x64px
-    )
+        # Multi crop augmentation for DINO, additionally, disable blur for cifar10
+        dino_collate_fn = lightly.data.DINOCollateFunction(
+            global_crop_size=128,
+            local_crop_size=64,
+        )
 
-    # Multi crop augmentation for DINO, additionally, disable blur for cifar10
-    dino_collate_fn = lightly.data.DINOCollateFunction(
-        global_crop_size=128,
-        local_crop_size=64,
-    )
+        # Two crops for SMoG
+        smog_collate_function = lightly.data.collate.SMoGCollateFunction(
+            crop_sizes=[128, 128],
+            crop_counts=[1, 1],
+            crop_min_scales=[0.2, 0.2],
+            crop_max_scales=[1.0, 1.0],
+        )
+        # Collate function passing geometrical transformation for VICRegL
+        vicregl_collate_fn = lightly.data.VICRegLCollateFunction(
+            global_crop_size=128, local_crop_size=64, global_grid_size=4, local_grid_size=2
+        )
+        msn_collate_fn = lightly.data.MSNCollateFunction(random_size=128, focal_size=64)
 
-    # Two crops for SMoG
-    smog_collate_function = lightly.data.collate.SMoGCollateFunction(
-        crop_sizes=[128, 128],
-        crop_counts=[1, 1],
-        crop_min_scales=[0.2, 0.2],
-        crop_max_scales=[1.0, 1.0],
-    )
-    # Collate function passing geometrical transformation for VICRegL
-    vicregl_collate_fn = lightly.data.VICRegLCollateFunction(
-        global_crop_size=128, local_crop_size=64, global_grid_size=4, local_grid_size=2
-    )
-    msn_collate_fn = lightly.data.MSNCollateFunction(random_size=128, focal_size=64)
+        vqgan_collate_fn = lightly.data.MAECollateFunction(normalize=None, input_size=128)
 
-    vqgan_collate_fn = lightly.data.MAECollateFunction(normalize=None, input_size=128)
+        # No additional augmentations for the test set
+        test_transforms = torchvision.transforms.Compose(
+            [
+                torchvision.transforms.Resize(input_size),
+                torchvision.transforms.CenterCrop(128),
+                torchvision.transforms.ToTensor(),
+                normalize_transform,
+            ]
+        )
+    elif input_size == 224:
+        collate_fn = lightly.data.SimCLRCollateFunction(
+            input_size=input_size,
+        )
+        if byol_mode == "v1" or byol_mode == "v2" or byol_mode == "v3":
+            # import Normalize from torchvision transforms
+            collate_fn = lightly.data.SimCLRCollateFunction(
+                input_size=input_size,
+                normalize={
+                    "mean": (0.48145466, 0.4578275, 0.40821073),
+                    "std": (0.26862954, 0.26130258, 0.27577711),
+                },
+            )
+        swav_collate_fn = lightly.data.SwaVCollateFunction(
+            crop_sizes=[224, 96],
+            crop_counts=[2, 6],  # 2 crops @ 224x224px and 6 crops @ 96x96px
+        )
+        dinocollate_fn = lightly.data.DINOCollateFunction(
+            global_crop_size=224,
+            local_crop_size=96,
+        )
+        smog_collate_function = lightly.data.collate.SMoGCollateFunction(
+            crop_sizes=[224, 224],
+            crop_counts=[1, 1],
+            crop_min_scales=[0.2, 0.2],
+            crop_max_scales=[1.0, 1.0],
+        )
+        vicregl_collate_fn = lightly.data.VICRegLCollateFunction(
+            global_crop_size=224, local_crop_size=96, global_grid_size=7, local_grid_size=3
+        )
+        msn_collate_fn = lightly.data.MSNCollateFunction(random_size=224, focal_size=96)
+        vqgan_collate_fn = lightly.data.MAECollateFunction(normalize=None, input_size=224)
+        test_transforms = torchvision.transforms.Compose(
+            [
+                torchvision.transforms.Resize(input_size),
+                torchvision.transforms.CenterCrop(224),
+                torchvision.transforms.ToTensor(),
+                normalize_transform,
+            ]
+        )
 
-    # No additional augmentations for the test set
-    test_transforms = torchvision.transforms.Compose(
-        [
-            torchvision.transforms.Resize(input_size),
-            torchvision.transforms.CenterCrop(128),
-            torchvision.transforms.ToTensor(),
-            normalize_transform,
-        ]
-    )
+
 elif args["dataset"] == "cifar10":
     collate_fn = lightly.data.SimCLRCollateFunction(
         input_size=32,
@@ -877,10 +932,14 @@ class SequentialSLIPModel(BenchmarkModule):
     def training_step(self, batch, batch_index):
         (x0, x1), _, _ = batch
 
+        z0 = self.forward(x0)
+        z1 = self.forward(x1)
+
         # clip part
         clip_0 = CLIP_embedding(x0, self.device)
         clip_1 = CLIP_embedding(x1, self.device)
-        loss_clip = self.criterion(clip_0, clip_1)
+
+        loss_clip = self.criterion(clip_0, z0) + self.criterion(clip_1, z1)
 
         loss = loss_clip
 
@@ -1439,7 +1498,7 @@ class MAEModel(BenchmarkModule):
             embed_input_dim=384,
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
-            out_dim=vit.patch_size ** 2 * 3,
+            out_dim=self.patch_size ** 2 * 3,
             dropout=0,
             attention_dropout=0,
         )
@@ -2082,7 +2141,7 @@ class MSNModel(BenchmarkModule):
 
         self.warmup_epochs = 15
         # ViT small configuration (ViT-S/16)
-        self.mask_ratio = args["msn_mask_ratio"]
+        self.mask_ratio = args["msn_masking_ratio"]
         self.backbone = masked_autoencoder.MAEBackbone(
             image_size=input_size,
             patch_size=args["patch_size"],
@@ -2526,17 +2585,20 @@ class TiCoModel(BenchmarkModule):
 models = [
     # vqganMAEModel,
     # SLIPModel,
-    DINOModel,
-    BYOLModel,
-    MAEModel,
-    SwaVModel,
-    MSNModel,
-    SimMIMModel,
-    SimCLRModel,
-    TiCoModel,
-    VICRegLModel,
     # vqganMAEModel,
     # SequentialSLIPModel,
+
+    # SimMIMModel,
+
+    SimSiamModel,
+    # SwaVModel,
+    # DINOModel,
+    # BYOLModel,
+    # MAEModel,
+    # MSNModel,
+    # SimCLRModel,
+    # TiCoModel,
+    # VICRegLModel,
 ]
 bench_results = dict()
 
@@ -2555,6 +2617,15 @@ for BenchmarkModel in models:
         if not "contrast" in model_name and contrastive_type in ["moco", "simclr"]:
             continue
         runs = []
+
+        if model_name == 'MAE' or model_name == 'MSN' or model_name == 'SimMIM':
+            # args update model dim
+            args.update({"model_dim": 384})
+            args.update({"flatten": False})
+
+        # if model_name == 'SimCLR':
+        #     # args update model dim
+        #     args.update({"model_dim": 1024})
 
         if "contrast" in model_name:
             model_name = model_name + contrastive_type
@@ -2635,6 +2706,7 @@ for BenchmarkModel in models:
                     num_classes=classes,
                 )
                 benchmark_model.set_backbone(simclr_model.backbone)
+                print("done")
 
             else:
                 benchmark_model = BenchmarkModel(
@@ -2678,6 +2750,9 @@ for BenchmarkModel in models:
                 sync_batchnorm=sync_batchnorm,
                 logger=wandb_logger,
                 check_val_every_n_epoch=args["val_epoch"],
+                limit_train_batches=1 if test else None,
+                limit_val_batches=1 if test else None,
+                # accumulate_grad_batches
                 # accelerator="cpu",
                 # num_processes=0,
                 # callbacks=[checkpoint_callback]

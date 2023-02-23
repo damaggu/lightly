@@ -1,4 +1,5 @@
 """ Helper modules for benchmarking SSL models """
+import copy
 import io
 
 import numpy as np
@@ -149,8 +150,15 @@ def evaluate_model_linear_probing(
     linear_layer.weight.data.normal_(mean=0.0, std=0.01)
     linear_layer.bias.data.zero_()
 
-    model.head = nn.Sequential(nn.Flatten(start_dim=1), torch.nn.BatchNorm1d(args["model_dim"], affine=False, eps=1e-6),
-                               linear_layer)
+    # get model name
+    # print(model)
+
+    if args['flatten']:
+        model.head = nn.Sequential(nn.Flatten(start_dim=1), torch.nn.BatchNorm1d(args["model_dim"], affine=False, eps=1e-6),
+                                   linear_layer)
+    else:
+        model.head = nn.Sequential(torch.nn.BatchNorm1d(args["model_dim"], affine=False, eps=1e-6), linear_layer)
+        # model.head = linear_layer
 
     for _, p in model.named_parameters():
         p.requires_grad = False
@@ -334,29 +342,31 @@ class BenchmarkModule(LightningModule):
 
     def training_epoch_end(self, outputs):
         # update feature bank at the end of each training epoch
-        self.backbone.eval()
-        self.feature_bank = []
-        self.targets_bank = []
-        with torch.no_grad():
-            for data in self.dataloader_kNN:
-                img, target, _ = data
-                img = img.to(self.dummy_param.device)
-                target = target.to(self.dummy_param.device)
-                if self._get_name() == 'vqganMAEModel':
-                    img = self.images_to_codes(img)
-                feature = self.backbone(img).squeeze()
-                feature = F.normalize(feature, dim=1)
-                self.feature_bank.append(feature)
-                self.targets_bank.append(target)
-        self.feature_bank = torch.cat(
-            self.feature_bank, dim=0).t().contiguous()
-        self.targets_bank = torch.cat(
-            self.targets_bank, dim=0).t().contiguous()
-        self.backbone.train()
+        if self.args['do_kNN'] == True:
+            self.backbone.eval()
+            self.feature_bank = []
+            self.targets_bank = []
+            with torch.no_grad():
+                for data in self.dataloader_kNN:
+                    img, target, _ = data
+                    img = img.to(self.dummy_param.device)
+                    target = target.to(self.dummy_param.device)
+                    if self._get_name() == 'vqganMAEModel':
+                        img = self.images_to_codes(img)
+                    feature = self.backbone(img).squeeze()
+                    feature = F.normalize(feature, dim=1)
+                    self.feature_bank.append(feature)
+                    self.targets_bank.append(target)
+            self.feature_bank = torch.cat(
+                self.feature_bank, dim=0).t().contiguous()
+            self.targets_bank = torch.cat(
+                self.targets_bank, dim=0).t().contiguous()
+            self.backbone.train()
 
     def validation_step(self, batch, batch_idx):
+        print('validation step')
         # we can only do kNN predictions once we have a feature bank
-        if self.args['do_kNN']:
+        if self.args['do_kNN'] == True:
             if hasattr(self, 'feature_bank') and hasattr(self, 'targets_bank'):
                 images, targets, _ = batch
                 if self._get_name() == 'vqganMAEModel':
@@ -399,14 +409,23 @@ class BenchmarkModule(LightningModule):
 
         if self.args['do_probing']:
             torch.set_grad_enabled(True)
+
+            # if the model is MAEModel
+            if self._get_name() == 'MAEModel':
+                save_heads = copy.deepcopy(self.backbone.heads)
+                # self.backbone.heads = nn.Identity()
+                del self.backbone.heads
+
             max_accuracy, acc1, _, _ = evaluate_model_linear_probing(self.backbone, self.dataloader_train_ssl,
                                                                      self.dataloader_test, device, self.args,
-                                                                     addition_model=self)
+                                                                     addition_model=None)
             torch.set_grad_enabled(False)
             self.log('linear_probing_accuracy1', acc1, prog_bar=True)
             print(f"Current linear probing accuracy1: {acc1:.2f} %")
             # remove model.head from the backbone
             del self.backbone.head
+            if self._get_name() == 'MAEModel':
+                self.backbone.heads = save_heads
 
         if self.args['do_medmnist']:
             torch.set_grad_enabled(True)
