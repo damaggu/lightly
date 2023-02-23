@@ -193,7 +193,7 @@ byol_mode = "v0"
 # args["dataset"]  = 'iNat2021mini'
 # args["dataset"]  = 'RetinaMNIST'
 # args["dataset"]  = 'BreastMNIST'
-project_name = args["dataset"] + "_benchmark_28"
+project_name = args["dataset"] + "_benchmark_TEST"
 log_model = True
 
 #### linear probing args
@@ -2591,14 +2591,14 @@ models = [
     # SimMIMModel,
 
     SimSiamModel,
-    # SwaVModel,
-    # DINOModel,
-    # BYOLModel,
-    # MAEModel,
-    # MSNModel,
-    # SimCLRModel,
-    # TiCoModel,
-    # VICRegLModel,
+    SwaVModel,
+    DINOModel,
+    BYOLModel,
+    MAEModel,
+    MSNModel,
+    SimCLRModel,
+    TiCoModel,
+    VICRegLModel,
 ]
 bench_results = dict()
 
