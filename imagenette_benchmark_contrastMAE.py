@@ -125,6 +125,11 @@ else:
     else:
         args["batch_size"] = 4096 if dist else 2048
 
+gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+if dist:
+    args["gpus"] = gpus
+    args['batch_size'] = args['batch_size'] * gpus
+
 args["warmup_epochs"] = 10
 args["mae_masking_ratio"] = 0.50
 args["msn_masking_ratio"] = 0.15
@@ -215,7 +220,7 @@ gather_distributed = dist
 # benchmark
 
 # use a GPU if available
-gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+
 # gpus = 0
 
 if distributed:
