@@ -1519,8 +1519,8 @@ class MAEModel(BenchmarkModule):
         )
         self.decoder = masked_autoencoder.MAEDecoder(
             seq_length=self.sequence_length,
-            num_layers=4,
-            num_heads=3,
+            num_layers=12,
+            num_heads=4,
             embed_input_dim=768,
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
