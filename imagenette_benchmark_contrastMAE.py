@@ -107,7 +107,7 @@ import wandb
 logs_root_dir = os.path.join(os.getcwd(), "benchmark_logs")
 eli = False
 dist = False
-test = False
+test = True
 args = {}
 args["dataset"] = "imagenette"
 
@@ -1588,7 +1588,7 @@ class MAEModel(BenchmarkModule):
 
             # show_image(test_target_img, 1, inv_normalize=inv_normalize, times_255=True)
             # show_image(reconstructed_img_unpatched, 1, inv_normalize=inv_normalize, times_255=True)
-            show_image(orginal_img_unpatched, 1, inv_normalize=inv_normalize, times_255=True)
+            # show_image(orginal_img_unpatched, 1, inv_normalize=inv_normalize, times_255=True)
 
             # orginial, target, reconstructed next to each other
             concat_images = torch.cat((orginal_img_unpatched, test_target_img, reconstructed_img_unpatched), dim=2)
@@ -1603,7 +1603,7 @@ class MAEModel(BenchmarkModule):
             concat_images = concat_images[0]
 
             buf = io.BytesIO()
-            plt.savefig(concat_images, format='png')
+            plt.savefig(buf, format='png')
             buf.seek(0)
             image = Image.open(buf)
 
