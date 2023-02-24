@@ -99,7 +99,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         loss_scaler(loss, optimizer, clip_grad=max_norm,
                     # parameters=model.parameters(), create_graph=False,
                     parameters=model.head.parameters(), create_graph=True,
-                    # update_grad=(data_iter_step + 1) % accum_iter == 0
+                    update_grad=(data_iter_step + 1) % accum_iter == 0
                     )
         if (data_iter_step + 1) % accum_iter == 0:
             optimizer.zero_grad()
