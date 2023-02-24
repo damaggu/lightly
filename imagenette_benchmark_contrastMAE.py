@@ -107,7 +107,7 @@ import wandb
 logs_root_dir = os.path.join(os.getcwd(), "benchmark_logs")
 eli = False
 dist = False
-test = True
+test = False
 args = {}
 args["dataset"] = "imagenette"
 
