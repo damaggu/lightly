@@ -1574,7 +1574,7 @@ class MAEModel(BenchmarkModule):
 
         loss = self.criterion(x_pred, target)
         self.log("train_loss_ssl", loss)
-        if self.current_epoch % (args['val_epoch'] * args['batch_size']) == 0:
+        if self.batch_idx == 0:
             # empty patch
             # target_img = utils.set_at_index(patches, idx_mask - 1, torch.zeros_like(patches))
             target_img = utils.set_at_index(patches, idx_mask - 1, torch.zeros_like(patches[:, :idx_mask.shape[1], :]))
