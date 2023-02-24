@@ -425,6 +425,19 @@ def patchify(images: torch.Tensor, patch_size: int) -> torch.Tensor:
     patches = patches.reshape(shape=(N, num_patches, patch_size**2 * C))
     return patches
 
+def unpatchify(x, patch_size):
+    """
+    x: (N, L, patch_size**2 *3)
+    imgs: (N, 3, H, W)
+    """
+    p = patch_size
+    h = w = int(x.shape[1] ** .5)
+    assert h * w == x.shape[1]
+
+    x = x.reshape(shape=(x.shape[0], h, w, p, p, 3))
+    x = torch.einsum('nhwpqc->nchpwq', x)
+    imgs = x.reshape(shape=(x.shape[0], 3, h * p, h * p))
+    return imgs
 
 def random_token_mask(
     size: Tuple[int, int],
