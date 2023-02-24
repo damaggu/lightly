@@ -1508,7 +1508,7 @@ class MAEModel(BenchmarkModule):
         self.patch_size = args["patch_size"]
         self.sequence_length = 50
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
-        self.backbone = masked_autoencoder.MAEBackbone.from_vit(vit)
+        # self.backbone = masked_autoencoder.MAEBackbone.from_vit(vit)
         self.backbone = masked_autoencoder.MAEBackbone(
             image_size=input_size,
             patch_size=self.patch_size,
