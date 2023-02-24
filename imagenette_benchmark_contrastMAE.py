@@ -113,7 +113,7 @@ args["dataset"] = "imagenette"
 if args["dataset"] == "cifar10" or args["dataset"] == "imagenette":
     # input_size = 128
     input_size = 224
-elif args["dataset"] == "iNat2021mini":
+elif args["dataset"] in ["iNat2021mini", "inat_birds"]:
     input_size = 224
 elif args["dataset"] in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
     # input_size = 28
@@ -383,7 +383,7 @@ elif args["dataset"] == "cifar10":
         crop_min_scales=[0.2, 0.2],
         crop_max_scales=[1.0, 1.0],
     )
-elif args["dataset"] == "iNat2021mini":  # for now same augmentations as imagenette
+elif args["dataset"] in ["iNat2021mini", "inat_birds"]:
     collate_fn = lightly.data.SimCLRCollateFunction(
         input_size=input_size,
         gaussian_blur=0.0,  # from eli's paper
@@ -514,8 +514,11 @@ elif args["dataset"] == "cifar10":
     path_to_train = "./datasets/cifar10/train/"
     path_to_test = "./datasets/cifar10/test/"
 elif args["dataset"] == "iNat2021mini":
-    path_to_train = "./datasets/inat/train_mini/"
+    path_to_train = "./datasets/inat/train/train_mini/"
     path_to_test = "./datasets/inat/val/"
+elif args["dataset"] == "inat_birds":
+    path_to_train = "./datasets/inat/birds_train/"
+    path_to_test = "./datasets/inat/birds_val/"
 elif args["dataset"] in ["ChestMNIST", "RetinaMNIST"]:
     import medmnist
     import torchvision.transforms as T
