@@ -86,6 +86,18 @@ from PIL import Image
 # import display
 
 
+# try out inat pytorch dataloader
+#
+# from torchvision.datasets import INaturalist
+#
+# test = INaturalist(
+#     root='./datasets/inat_pytorch',
+#     version='2021_train',
+#     download=True,
+# )
+# print('done')
+
+
 # wandb offline
 # os.environ['WANDB_MODE'] = 'offline'
 
@@ -94,7 +106,7 @@ import wandb
 logs_root_dir = os.path.join(os.getcwd(), "benchmark_logs")
 eli = False
 dist = False
-test = True
+test = False
 args = {}
 args["dataset"] = "imagenette"
 
@@ -111,14 +123,14 @@ else:
 
 args["input_size"] = input_size
 args['flatten'] = True
-args["num_workers"] = 8
+args["num_workers"] = 6
 args["memory_bank_size"] = 4096
 if eli:
     args["batch_size"] = 4096
     args["max_epochs"] = 1000
     args["val_epoch"] = 50
 else:
-    args["max_epochs"] = 500
+    args["max_epochs"] = 800
     args["val_epoch"] = 10
     if input_size == 224:
         args["batch_size"] = 128 if dist else 64
@@ -1056,7 +1068,8 @@ class BYOLModel(BenchmarkModule):
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
         )
         # create a ResNet backbone and remove the classification head
-        resnet = torchvision.models.resnet18()
+        # resnet = torchvision.models.resnet18()
+        resnet = torchvision.models.resnet50()
         feature_dim = list(resnet.children())[-1].in_features
         self.backbone = nn.Sequential(
             *list(resnet.children())[:-1], nn.AdaptiveAvgPool2d(1)
@@ -1252,7 +1265,8 @@ class DINOModel(BenchmarkModule):
         # resnet = torchvision.models.resnet18(pretrained=False)
         # pretrained resnet 18
         # resnet = torchvision.models.resnet18(pretrained=False)
-        resnet = torchvision.models.resnet18()
+        # resnet = torchvision.models.resnet18()
+        resnet = torchvision.models.resnet50()
         feature_dim = list(resnet.children())[-1].in_features
         self.backbone = nn.Sequential(
             *list(resnet.children())[:-1], nn.AdaptiveAvgPool2d(1)
@@ -2602,8 +2616,8 @@ models = [
     SimSiamModel,
     SwaVModel,
     DINOModel,
-    BYOLModel,
-    MAEModel,
+    BYOLModel, # bs 256; ft 128
+    MAEModel, # bs 256; ft 64
     MSNModel,
     SimCLRModel,
     TiCoModel,
