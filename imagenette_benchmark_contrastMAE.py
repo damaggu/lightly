@@ -215,7 +215,7 @@ byol_mode = "v0"
 # args["dataset"]  = 'iNat2021mini'
 # args["dataset"]  = 'RetinaMNIST'
 # args["dataset"]  = 'BreastMNIST'
-project_name = args["dataset"] + "_benchmark_TEST"
+project_name = args["dataset"] + "_benchmark_NEW"
 log_model = True
 
 #### linear probing args
