@@ -587,7 +587,7 @@ elif args["dataset"] in ["ChestMNIST", "RetinaMNIST"]:
         copy.deepcopy(train_dataset), transform=test_transforms
     )
     dataset_train_kNN = lightly.data.LightlyDataset.from_torch_dataset(
-        copy.deepcopy(train_dataset), transform=test_transforms
+        copy.deepcopy(test_dataset), transform=test_transforms
     )
     dataset_test = lightly.data.LightlyDataset.from_torch_dataset(
         test_dataset, transform=test_transforms
@@ -602,7 +602,7 @@ if args["dataset"] not in ["medmnist", "ChestMNIST", "RetinaMNIST"]:
     )
     # we use test transformations for getting the feature for kNN on train data
     dataset_train_kNN = lightly.data.LightlyDataset(
-        input_dir=path_to_train, transform=test_transforms
+        input_dir=path_to_test, transform=test_transforms
     )
     dataset_test = lightly.data.LightlyDataset(
         input_dir=path_to_test, transform=test_transforms
@@ -2356,7 +2356,7 @@ class SimMIMModel(BenchmarkModule):
 
         vit = torchvision.models.vit_b_32(pretrained=False)
         self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
-        decoder_dim = vit.hidden_dim
+        decoder_dim = 384
         self.mask_ratio = args["mae_masking_ratio"]
         self.patch_size = args["patch_size"]
         self.sequence_length = vit.seq_length
@@ -2373,7 +2373,7 @@ class SimMIMModel(BenchmarkModule):
         )
 
         # the decoder is a simple linear layer
-        self.decoder = nn.Linear(vit.hidden_dim, self.patch_size ** 2 * 3)
+        self.decoder = nn.Linear(384, self.patch_size ** 2 * 3)
 
         # L1 loss as paper suggestion
         self.criterion = nn.L1Loss()
