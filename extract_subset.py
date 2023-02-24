@@ -84,8 +84,8 @@ for bird in tqdm(bird_image_id_list):
 
 #
 
-path_to_labels = '../datasets/inat/val.json'
-path_to_bird_images = '../datasets/inat/birds_val'
+path_to_labels = './datasets/inat/val.json'
+path_to_bird_images = './datasets/inat/birds_val'
 
 import os
 if not os.path.exists(path_to_bird_images):
