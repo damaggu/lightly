@@ -151,10 +151,10 @@ if dist:
 
 
 args["warmup_epochs"] = 10
-args["mae_masking_ratio"] = 0.50
+args["mae_masking_ratio"] = 0.75
 args["msn_masking_ratio"] = 0.15
-args["patch_size"] = 4
-args["do_probing"] = True
+args["patch_size"] = 16
+args["do_probing"] = False
 args["do_kNN"] = True
 args["do_medmnist"] = False
 args["knn_k"] = 200
@@ -1501,27 +1501,27 @@ class MAEModel(BenchmarkModule):
         )
 
         decoder_dim = 512
-        vit = torchvision.models.vit_b_32(pretrained=False)
+        # vit = torchvision.models.vit_b_32(pretrained=False)
 
         self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
         self.mask_ratio = args["mae_masking_ratio"]
         self.patch_size = args["patch_size"]
-        self.sequence_length = vit.seq_length
+        self.sequence_length = 50
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
-        # self.backbone = masked_autoencoder.MAEBackbone.from_vit(vit)
+        self.backbone = masked_autoencoder.MAEBackbone.from_vit(vit)
         self.backbone = masked_autoencoder.MAEBackbone(
             image_size=input_size,
             patch_size=self.patch_size,
             num_layers=12,
-            num_heads=6,
-            hidden_dim=384,
-            mlp_dim=384 * 4,
+            num_heads=12,
+            hidden_dim=768,
+            mlp_dim=768 * 4,
         )
         self.decoder = masked_autoencoder.MAEDecoder(
-            seq_length=vit.seq_length,
-            num_layers=1,
-            num_heads=16,
-            embed_input_dim=384,
+            seq_length=self.sequence_length,
+            num_layers=4,
+            num_heads=3,
+            embed_input_dim=768,
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
             out_dim=self.patch_size ** 2 * 3,
@@ -2616,10 +2616,10 @@ models = [
 
     # SimMIMModel,
 
-    SimSiamModel,
-    SwaVModel,
-    DINOModel,
-    BYOLModel, # bs 256; ft 128
+    # SimSiamModel,
+    # SwaVModel,
+    # DINOModel,
+    # BYOLModel, # bs 256; ft 128
     MAEModel, # bs 256; ft 64
     MSNModel,
     SimCLRModel,
