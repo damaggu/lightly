@@ -1574,7 +1574,7 @@ class MAEModel(BenchmarkModule):
 
         loss = self.criterion(x_pred, target)
         self.log("train_loss_ssl", loss)
-        if self.current_epoch % args['val_epoch'] == 0:
+        if self.current_epoch % (args['val_epoch'] * args['batch_size']) == 0:
             # empty patch
             # target_img = utils.set_at_index(patches, idx_mask - 1, torch.zeros_like(patches))
             target_img = utils.set_at_index(patches, idx_mask - 1, torch.zeros_like(patches[:, :idx_mask.shape[1], :]))
@@ -1601,6 +1601,12 @@ class MAEModel(BenchmarkModule):
             concat_images = concat_images * 255
             concat_images = concat_images.astype(np.uint8)
             concat_images = concat_images[0]
+
+            plt.figure()
+            plt.imshow(concat_images)
+            plt.xlabel('batch')
+            plt.ylabel('loss')
+            plt.title(f'Loss vs. Batches, epoch {self.current_epoch}')
 
             buf = io.BytesIO()
             plt.savefig(buf, format='png')
