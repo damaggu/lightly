@@ -47,6 +47,7 @@ with the default settings.
 
 """
 import copy
+import io
 import math
 import os
 
@@ -198,7 +199,7 @@ if test:
     else:
         args["batch_size"] = 2
         args["ft_batch_size"] = 2
-        args["mae_masking_ratio"] = 0.95
+        args["mae_masking_ratio"] = 0.75
         # args["model_dim"] = 384
         args["model_dim"] = 512
         args["patch_size"] = 16
@@ -1506,7 +1507,7 @@ class MAEModel(BenchmarkModule):
         self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
         self.mask_ratio = args["mae_masking_ratio"]
         self.patch_size = args["patch_size"]
-        self.sequence_length = 50
+        self.sequence_length = (args["input_size"] // self.patch_size) ** 2 + 1
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
         # self.backbone = masked_autoencoder.MAEBackbone.from_vit(vit)
         self.backbone = masked_autoencoder.MAEBackbone(
@@ -1567,8 +1568,57 @@ class MAEModel(BenchmarkModule):
         # must adjust idx_mask for missing class token
         target = utils.get_at_index(patches, idx_mask - 1)
 
+
+
+        # target_img = utils.set_at_index(patches, idx_mask - 1, x_pred)
+
         loss = self.criterion(x_pred, target)
         self.log("train_loss_ssl", loss)
+        if self.current_epoch % args['val_epoch'] == 0:
+            # empty patch
+            # target_img = utils.set_at_index(patches, idx_mask - 1, torch.zeros_like(patches))
+            target_img = utils.set_at_index(patches, idx_mask - 1, torch.zeros_like(patches[:, :idx_mask.shape[1], :]))
+            reconstructed_img = utils.set_at_index(target_img, idx_mask - 1, x_pred)
+
+            # test = utils.unpatchify(x=patches, patch_size=self.patch_size)
+            # test2 = utils.unpatchify(x=x_pred, patch_size=self.patch_size)
+            test_target_img = utils.unpatchify(x=target_img, patch_size=self.patch_size)[0]
+            reconstructed_img_unpatched = utils.unpatchify(x=reconstructed_img, patch_size=self.patch_size)[0]
+            orginal_img_unpatched = utils.unpatchify(x=patches, patch_size=self.patch_size)[0]
+
+            # show_image(test_target_img, 1, inv_normalize=inv_normalize, times_255=True)
+            # show_image(reconstructed_img_unpatched, 1, inv_normalize=inv_normalize, times_255=True)
+            show_image(orginal_img_unpatched, 1, inv_normalize=inv_normalize, times_255=True)
+
+            # orginial, target, reconstructed next to each other
+            concat_images = torch.cat((orginal_img_unpatched, test_target_img, reconstructed_img_unpatched), dim=2)
+            # show_image(torch.cat((orginal_img_unpatched, test_target_img, reconstructed_img_unpatched), dim=2), 1, inv_normalize=inv_normalize, times_255=True)
+
+            concat_images = concat_images.unsqueeze(0)
+            concat_images = inv_normalize(concat_images)
+            concat_images = concat_images.permute(0, 2, 3, 1)
+            concat_images = concat_images.detach().cpu().numpy()
+            concat_images = concat_images * 255
+            concat_images = concat_images.astype(np.uint8)
+            concat_images = concat_images[0]
+
+            buf = io.BytesIO()
+            plt.savefig(concat_images, format='png')
+            buf.seek(0)
+            image = Image.open(buf)
+
+            self.logger.log_image(key='reconstruction',
+                                  images=[image]
+                                  )
+
+            del buf
+            del image
+            del concat_images
+            del orginal_img_unpatched
+            del reconstructed_img_unpatched
+            del test_target_img
+
+
         return loss
 
     def configure_optimizers(self):
@@ -2621,10 +2671,10 @@ models = [
     # DINOModel,
     # BYOLModel, # bs 256; ft 128
     MAEModel, # bs 256; ft 64
-    MSNModel,
-    SimCLRModel,
-    TiCoModel,
-    VICRegLModel,
+    # MSNModel,
+    # SimCLRModel,
+    # TiCoModel,
+    # VICRegLModel,
 ]
 bench_results = dict()
 
