@@ -138,6 +138,8 @@ else:
     else:
         args["batch_size"] = 4096 if dist else 2048
 
+args['accumulate_grad_batches'] = 8
+
 if input_size == 224:
     args["ft_batch_size"] = 256 if dist else 128
 else:
@@ -2834,7 +2836,7 @@ for BenchmarkModel in models:
                 check_val_every_n_epoch=args["val_epoch"],
                 limit_train_batches=1 if test else None,
                 limit_val_batches=1 if test else None,
-                # accumulate_grad_batches
+                accumulate_grad_batches = args["accumulate_grad_batches"],
                 # accelerator="cpu",
                 # num_processes=0,
                 # callbacks=[checkpoint_callback]
