@@ -139,6 +139,7 @@ else:
         args["batch_size"] = 4096 if dist else 2048
 
 args['accumulate_grad_batches'] = 8
+args["batch_size"] = args["batch_size"] * args['accumulate_grad_batches']
 
 if input_size == 224:
     args["ft_batch_size"] = 256 if dist else 128
@@ -1522,8 +1523,8 @@ class MAEModel(BenchmarkModule):
         )
         self.decoder = masked_autoencoder.MAEDecoder(
             seq_length=self.sequence_length,
-            num_layers=12,
-            num_heads=4,
+            num_layers=8,
+            num_heads=16,
             embed_input_dim=768,
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
