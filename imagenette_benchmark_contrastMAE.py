@@ -139,7 +139,7 @@ else:
         args["batch_size"] = 4096 if dist else 2048
 
 args['accumulate_grad_batches'] = 8
-args["batch_size"] = args["batch_size"] * args['accumulate_grad_batches']
+args["effective_bs"] = args["batch_size"] * args['accumulate_grad_batches']
 
 if input_size == 224:
     args["ft_batch_size"] = 256 if dist else 128
@@ -207,7 +207,7 @@ if test:
         args["model_dim"] = 512
         args["patch_size"] = 16
 
-lr_factor = args["batch_size"] / 256  # scales the learning rate linearly with batch size
+lr_factor = args["effective_bs"] / 256  # scales the learning rate linearly with batch size
 
 # msn_aug_mode = 'v9'
 msn_aug_mode = "v0"
