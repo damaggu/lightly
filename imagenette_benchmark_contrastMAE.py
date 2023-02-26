@@ -591,7 +591,7 @@ elif args["dataset"] in ["ChestMNIST", "RetinaMNIST"]:
         copy.deepcopy(train_dataset), transform=test_transforms
     )
     dataset_train_kNN = lightly.data.LightlyDataset.from_torch_dataset(
-        copy.deepcopy(test_dataset), transform=test_transforms
+        copy.deepcopy(train_dataset), transform=test_transforms
     )
     dataset_test = lightly.data.LightlyDataset.from_torch_dataset(
         test_dataset, transform=test_transforms
@@ -606,7 +606,7 @@ if args["dataset"] not in ["medmnist", "ChestMNIST", "RetinaMNIST"]:
     )
     # we use test transformations for getting the feature for kNN on train data
     dataset_train_kNN = lightly.data.LightlyDataset(
-        input_dir=path_to_test, transform=test_transforms
+        input_dir=path_to_train, transform=test_transforms
     )
     dataset_test = lightly.data.LightlyDataset(
         input_dir=path_to_test, transform=test_transforms
