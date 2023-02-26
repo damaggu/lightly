@@ -144,7 +144,7 @@ else:
         args["batch_size"] = 128 if dist else 128
     else:
         args["batch_size"] = 4096 if dist else 2048
-args['MAE_collate_type'] = 'sobel'
+args['MAE_collate_type'] = 'fourier'
 args['MAE_baseLR'] = 1.5e-4
 args['accumulate_grad_batches'] = 8
 args["effective_bs"] = args["batch_size"] * args['accumulate_grad_batches']
@@ -532,6 +532,7 @@ class CustomTransform:
                 x = np.fft.fftshift(x)
             x = np.log(np.abs(x))
             x = torch.from_numpy(x)
+            x = x.float()
             x = x.squeeze(0)
         return x
 
@@ -2760,7 +2761,7 @@ for BenchmarkModel in models:
 
         if model_name == 'MAE' or model_name == 'MSN' or model_name == 'SimMIM':
             # args update model dim
-            args.update({"model_dim": 384})
+            args.update({"model_dim": 768})
             args.update({"flatten": False})
 
         # if model_name == 'SimCLR':
