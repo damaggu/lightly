@@ -407,7 +407,7 @@ class BenchmarkModule(LightningModule):
             # also perform linear probing
             # with torch.no_grad():
 
-        if self.args['do_probing']:
+        if self.args['do_probing'] and current_epoch % self.args['val_epoch'] == 0:
             torch.set_grad_enabled(True)
 
             # if the model is MAEModel
