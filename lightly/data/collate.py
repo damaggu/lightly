@@ -788,7 +788,7 @@ class FourierCollateFunction(MultiViewCollateFunction):
             ret = filters.sobel(ret)
         elif self.type == 'fourier':
             ret = np.fft.fft2(ret)
-            if self.with_shift:
+            if self.with_fft_shift:
                 ret = np.fft.fftshift(ret)
             ret = np.log(np.abs(ret))
             ret = torch.from_numpy(ret)
