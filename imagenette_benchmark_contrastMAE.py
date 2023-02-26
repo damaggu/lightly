@@ -87,6 +87,13 @@ from PIL import Image
 # import display
 
 
+# simple arg parser
+import argparse as ap
+parser = ap.ArgumentParser()
+parser.add_argument('--run_name', type=str, default=None)
+
+run_name = parser.parse_args().run_name
+
 # try out inat pytorch dataloader
 #
 # from torchvision.datasets import INaturalist
@@ -2727,7 +2734,7 @@ for BenchmarkModel in models:
                 wandb_logger = WandbLogger(
                     project=project_name,
                     entity="maggu",
-                    name=f"{model_name}--training--{seed}",
+                    name=f"{model_name}--training--{seed}" + run_name,
                     log_model=log_model,
                 )
             # get every key val of args
