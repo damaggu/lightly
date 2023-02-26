@@ -90,7 +90,7 @@ from PIL import Image
 # simple arg parser
 import argparse as ap
 parser = ap.ArgumentParser()
-parser.add_argument('--run_name', type=str, default=None)
+parser.add_argument('--run_name', type=str, default='')
 
 run_name = parser.parse_args().run_name
 
@@ -139,13 +139,13 @@ if eli:
     args["val_epoch"] = 50
 else:
     args["max_epochs"] = 800
-    args["val_epoch"] = 10
+    args["val_epoch"] = 1
     if input_size == 224:
-        args["batch_size"] = 128 if dist else 64
+        args["batch_size"] = 128 if dist else 128
     else:
         args["batch_size"] = 4096 if dist else 2048
-
-args['MAE_baseLR'] = 0.0015
+args['MAE_collate_type'] = 'sobel'
+args['MAE_baseLR'] = 1.5e-4
 args['accumulate_grad_batches'] = 8
 args["effective_bs"] = args["batch_size"] * args['accumulate_grad_batches']
 
@@ -516,8 +516,54 @@ elif args["dataset"] in ["medmnist", "ChestMNIST", "RetinaMNIST"]:
     else:
         raise NotImplementedError
 
+# custom torchvision transform
+class CustomTransform:
+    def __init__(self, type='sobel'):
+        self.type = type
+
+    def __call__(self, x):
+        if self.type == 'sobel':
+            x = filters.sobel(x.unsqueeze(0))
+            x = x.squeeze(0)
+        elif self.type == 'fourier':
+            x = np.fft.fft2(x.unsqueeze(0).numpy())
+            if self.with_shift:
+                x = np.fft.fftshift(x)
+            x = np.log(np.abs(x))
+            x = torch.from_numpy(x)
+            x = x.squeeze(0)
+        return x
+
+    def __repr__(self):
+        return f"CustomTransform({self.transform})"
+
+
 #  Single crop augmentation for MAE
-mae_collate_fn = lightly.data.MAECollateFunction()
+# mae_collate_fn = lightly.data.MAECollateFunction()
+if args['MAE_collate_type'] == 'sobel':
+    mae_collate_fn = lightly.data.FourierCollateFunction(type='sobel')
+    test_transforms = torchvision.transforms.Compose(
+        [
+            torchvision.transforms.Resize(256),
+            torchvision.transforms.CenterCrop(224),
+            torchvision.transforms.ToTensor(),
+            normalize_transform,
+            CustomTransform(type='sobel')
+        ]
+    )
+elif args['MAE_collate_type'] == 'fourier':
+    mae_collate_fn = lightly.data.FourierCollateFunction(type='fourier')
+    test_transforms = torchvision.transforms.Compose(
+        [
+            torchvision.transforms.Resize(256),
+            torchvision.transforms.CenterCrop(224),
+            torchvision.transforms.ToTensor(),
+            normalize_transform,
+            CustomTransform(type='fourier')
+        ]
+    )
+else:
+    mae_collate_fn = lightly.data.MAECollateFunction()
 
 if args["dataset"] == "imagenette":
     path_to_train = "./datasets/imagenette2-160/train/"

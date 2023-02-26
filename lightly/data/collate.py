@@ -1,5 +1,6 @@
 """ Collate Functions """
-
+import matplotlib.pyplot as plt
+import numpy as np
 # Copyright (c) 2020. Lightly AG and its affiliates.
 # All Rights Reserved
 
@@ -11,6 +12,7 @@ from typing import List, Tuple, Union
 from PIL import Image
 import torchvision
 import torchvision.transforms as T
+from kornia import filters
 
 from lightly.transforms import GaussianBlur, Jigsaw, RandomRotate, RandomSolarization
 from lightly.transforms.random_crop_and_flip_with_grid import RandomResizedCropAndFlip
@@ -34,7 +36,6 @@ class BaseCollateFunction(nn.Module):
     """
 
     def __init__(self, transform: torchvision.transforms.Compose):
-
         super(BaseCollateFunction, self).__init__()
         self.transform = transform
 
@@ -135,22 +136,22 @@ class ImageCollateFunction(BaseCollateFunction):
     """
 
     def __init__(
-        self,
-        input_size: int = 64,
-        cj_prob: float = 0.8,
-        cj_bright: float = 0.7,
-        cj_contrast: float = 0.7,
-        cj_sat: float = 0.7,
-        cj_hue: float = 0.2,
-        min_scale: float = 0.15,
-        random_gray_scale: float = 0.2,
-        gaussian_blur: float = 0.5,
-        kernel_size: float = 0.1,
-        vf_prob: float = 0.0,
-        hf_prob: float = 0.5,
-        rr_prob: float = 0.0,
-        rr_degrees: Union[None, float, Tuple[float, float]] = None,
-        normalize: dict = imagenet_normalize,
+            self,
+            input_size: int = 64,
+            cj_prob: float = 0.8,
+            cj_bright: float = 0.7,
+            cj_contrast: float = 0.7,
+            cj_sat: float = 0.7,
+            cj_hue: float = 0.2,
+            min_scale: float = 0.15,
+            random_gray_scale: float = 0.2,
+            gaussian_blur: float = 0.5,
+            kernel_size: float = 0.1,
+            vf_prob: float = 0.0,
+            hf_prob: float = 0.5,
+            rr_prob: float = 0.0,
+            rr_degrees: Union[None, float, Tuple[float, float]] = None,
+            normalize: dict = imagenet_normalize,
     ):
 
         if isinstance(input_size, tuple):
@@ -263,21 +264,20 @@ class SimCLRCollateFunction(ImageCollateFunction):
     """
 
     def __init__(
-        self,
-        input_size: int = 224,
-        cj_prob: float = 0.8,
-        cj_strength: float = 0.5,
-        min_scale: float = 0.08,
-        random_gray_scale: float = 0.2,
-        gaussian_blur: float = 0.5,
-        kernel_size: float = 0.1,
-        vf_prob: float = 0.0,
-        hf_prob: float = 0.5,
-        rr_prob: float = 0.0,
-        rr_degrees: Union[None, float, Tuple[float, float]] = None,
-        normalize: dict = imagenet_normalize,
+            self,
+            input_size: int = 224,
+            cj_prob: float = 0.8,
+            cj_strength: float = 0.5,
+            min_scale: float = 0.08,
+            random_gray_scale: float = 0.2,
+            gaussian_blur: float = 0.5,
+            kernel_size: float = 0.1,
+            vf_prob: float = 0.0,
+            hf_prob: float = 0.5,
+            rr_prob: float = 0.0,
+            rr_degrees: Union[None, float, Tuple[float, float]] = None,
+            normalize: dict = imagenet_normalize,
     ):
-
         super(SimCLRCollateFunction, self).__init__(
             input_size=input_size,
             cj_prob=cj_prob,
@@ -345,21 +345,20 @@ class MoCoCollateFunction(ImageCollateFunction):
     """
 
     def __init__(
-        self,
-        input_size: int = 224,
-        cj_prob: float = 0.8,
-        cj_strength: float = 0.4,
-        min_scale: float = 0.2,
-        random_gray_scale: float = 0.2,
-        gaussian_blur: float = 0.0,
-        kernel_size: float = 0.1,
-        vf_prob: float = 0.0,
-        hf_prob: float = 0.5,
-        rr_prob: float = 0.0,
-        rr_degrees: Union[None, float, Tuple[float, float]] = None,
-        normalize: dict = imagenet_normalize,
+            self,
+            input_size: int = 224,
+            cj_prob: float = 0.8,
+            cj_strength: float = 0.4,
+            min_scale: float = 0.2,
+            random_gray_scale: float = 0.2,
+            gaussian_blur: float = 0.0,
+            kernel_size: float = 0.1,
+            vf_prob: float = 0.0,
+            hf_prob: float = 0.5,
+            rr_prob: float = 0.0,
+            rr_degrees: Union[None, float, Tuple[float, float]] = None,
+            normalize: dict = imagenet_normalize,
     ):
-
         super(MoCoCollateFunction, self).__init__(
             input_size=input_size,
             cj_prob=cj_prob,
@@ -397,12 +396,12 @@ class MultiCropCollateFunction(MultiViewCollateFunction):
     """
 
     def __init__(
-        self,
-        crop_sizes: List[int],
-        crop_counts: List[int],
-        crop_min_scales: List[float],
-        crop_max_scales: List[float],
-        transforms: T.Compose,
+            self,
+            crop_sizes: List[int],
+            crop_counts: List[int],
+            crop_min_scales: List[float],
+            crop_max_scales: List[float],
+            transforms: T.Compose,
     ):
 
         if len(crop_sizes) != len(crop_counts):
@@ -423,7 +422,6 @@ class MultiCropCollateFunction(MultiViewCollateFunction):
 
         crop_transforms = []
         for i in range(len(crop_sizes)):
-
             random_resized_crop = T.RandomResizedCrop(
                 crop_sizes[i], scale=(crop_min_scales[i], crop_max_scales[i])
             )
@@ -493,23 +491,22 @@ class SwaVCollateFunction(MultiCropCollateFunction):
     """
 
     def __init__(
-        self,
-        crop_sizes: List[int] = [224, 96],
-        crop_counts: List[int] = [2, 6],
-        crop_min_scales: List[float] = [0.14, 0.05],
-        crop_max_scales: List[float] = [1.0, 0.14],
-        hf_prob: float = 0.5,
-        vf_prob: float = 0.0,
-        rr_prob: float = 0.0,
-        rr_degrees: Union[None, float, Tuple[float, float]] = None,
-        cj_prob: float = 0.8,
-        cj_strength: float = 0.8,
-        random_gray_scale: float = 0.2,
-        gaussian_blur: float = .5,
-        kernel_size: float = 1.0,
-        normalize: dict = imagenet_normalize,
+            self,
+            crop_sizes: List[int] = [224, 96],
+            crop_counts: List[int] = [2, 6],
+            crop_min_scales: List[float] = [0.14, 0.05],
+            crop_max_scales: List[float] = [1.0, 0.14],
+            hf_prob: float = 0.5,
+            vf_prob: float = 0.0,
+            rr_prob: float = 0.0,
+            rr_degrees: Union[None, float, Tuple[float, float]] = None,
+            cj_prob: float = 0.8,
+            cj_strength: float = 0.8,
+            random_gray_scale: float = 0.2,
+            gaussian_blur: float = .5,
+            kernel_size: float = 1.0,
+            normalize: dict = imagenet_normalize,
     ):
-
         color_jitter = T.ColorJitter(
             cj_strength,
             cj_strength,
@@ -601,29 +598,28 @@ class DINOCollateFunction(MultiViewCollateFunction):
     """
 
     def __init__(
-        self,
-        global_crop_size=224,
-        global_crop_scale=(0.4, 1.0),
-        local_crop_size=96,
-        local_crop_scale=(0.05, 0.4),
-        n_local_views=6,
-        hf_prob=0.5,
-        vf_prob=0,
-        rr_prob=0,
-        rr_degrees: Union[None, float, Tuple[float, float]] = None,
-        cj_prob=0.8,
-        cj_bright=0.4,
-        cj_contrast=0.4,
-        cj_sat=0.2,
-        cj_hue=0.1,
-        random_gray_scale=0.2,
-        gaussian_blur=(1.0, 0.1, 0.5),
-        kernel_size=1.4,
-        kernel_scale=0.6,
-        solarization_prob=0.2,
-        normalize=imagenet_normalize,
+            self,
+            global_crop_size=224,
+            global_crop_scale=(0.4, 1.0),
+            local_crop_size=96,
+            local_crop_scale=(0.05, 0.4),
+            n_local_views=6,
+            hf_prob=0.5,
+            vf_prob=0,
+            rr_prob=0,
+            rr_degrees: Union[None, float, Tuple[float, float]] = None,
+            cj_prob=0.8,
+            cj_bright=0.4,
+            cj_contrast=0.4,
+            cj_sat=0.2,
+            cj_hue=0.1,
+            random_gray_scale=0.2,
+            gaussian_blur=(1.0, 0.1, 0.5),
+            kernel_size=1.4,
+            kernel_scale=0.6,
+            solarization_prob=0.2,
+            normalize=imagenet_normalize,
     ):
-
         flip_and_color_jitter = T.Compose(
             [
                 T.RandomHorizontalFlip(p=hf_prob),
@@ -716,10 +712,10 @@ class MAECollateFunction(MultiViewCollateFunction):
     """
 
     def __init__(
-        self,
-        input_size: Union[int, Tuple[int, int]] = 224,
-        min_scale: float = 0.2,
-        normalize: dict = imagenet_normalize,
+            self,
+            input_size: Union[int, Tuple[int, int]] = 224,
+            min_scale: float = 0.2,
+            normalize: dict = imagenet_normalize,
     ):
         transforms = [
             T.RandomResizedCrop(
@@ -737,6 +733,70 @@ class MAECollateFunction(MultiViewCollateFunction):
         views, labels, fnames = super().forward(batch)
         # Return only first view as MAE needs only a single view per image.
         return views[0], labels, fnames
+
+class FourierCollateFunction(MultiViewCollateFunction):
+    """Implements the view augmentation for an image, returning the image and its Fourier transforms for different
+    frequencies as views.
+
+    Attributes:
+        input_size:
+            Size of the input image in pixels.
+        min_scale:
+            Minimum size of the randomized crop relative to the input_size.
+        normalize:
+            Dictionary with 'mean' and 'std' for torchvision.transforms.Normalize.
+
+    """
+
+    def __init__(
+            self,
+            input_size: Union[int, Tuple[int, int]] = 224,
+            min_scale: float = 0.2,
+            normalize: dict = imagenet_normalize,
+            type: str = 'sobel',
+            with_fft_shift: bool = True,
+            train: bool = True,
+    ):
+        self.type = type
+        self.with_fft_shift = with_fft_shift
+        self.train = train
+        if self.train:
+            transforms = [
+                T.RandomResizedCrop(
+                    input_size, scale=(min_scale, 1.0), interpolation=3
+                ),  # 3 is bicubic
+                T.RandomHorizontalFlip(),
+                T.ToTensor(),
+            ]
+            if normalize:
+                transforms.append(T.Normalize(mean=normalize["mean"], std=normalize["std"]))
+        else:
+            transforms = [
+                torchvision.transforms.Resize(256),
+                torchvision.transforms.CenterCrop(224),
+                torchvision.transforms.ToTensor(),
+                T.Normalize(mean=normalize["mean"], std=normalize["std"]),
+            ]
+
+        super().__init__([T.Compose(transforms)])
+
+    def forward(self, batch: List[tuple]):
+        views, labels, fnames = super().forward(batch)
+        # Return only first view as MAE needs only a single view per image.
+        ret = views[0]
+        if self.type == 'sobel':
+            ret = filters.sobel(ret)
+        elif self.type == 'fourier':
+            ret = np.fft.fft2(ret)
+            if self.with_shift:
+                ret = np.fft.fftshift(ret)
+            ret = np.log(np.abs(ret))
+            ret = torch.from_numpy(ret)
+            # plot ret[0]
+            # import matplotlib.pyplot as plt
+            # plt.imshow(ret[0].permute(1,2,0).detach().numpy())
+            # plt.show()
+        return ret, labels, fnames
 
 
 class PIRLCollateFunction(nn.Module):
@@ -782,18 +842,18 @@ class PIRLCollateFunction(nn.Module):
     """
 
     def __init__(
-        self,
-        input_size: int = 64,
-        cj_prob: float = 0.8,
-        cj_bright: float = 0.4,
-        cj_contrast: float = 0.4,
-        cj_sat: float = 0.4,
-        cj_hue: float = 0.4,
-        min_scale: float = 0.08,
-        random_gray_scale: float = 0.2,
-        hf_prob: float = 0.5,
-        n_grid: int = 3,
-        normalize: dict = imagenet_normalize,
+            self,
+            input_size: int = 64,
+            cj_prob: float = 0.8,
+            cj_bright: float = 0.4,
+            cj_contrast: float = 0.4,
+            cj_sat: float = 0.4,
+            cj_hue: float = 0.4,
+            min_scale: float = 0.08,
+            random_gray_scale: float = 0.2,
+            hf_prob: float = 0.5,
+            n_grid: int = 3,
+            normalize: dict = imagenet_normalize,
     ):
         super(PIRLCollateFunction, self).__init__()
 
@@ -893,21 +953,21 @@ class MSNCollateFunction(MultiViewCollateFunction):
     """
 
     def __init__(
-        self,
-        random_size: int = 224,
-        focal_size: int = 96,
-        random_views: int = 2,
-        focal_views: int = 10,
-        random_crop_scale: Tuple[float, float] = (0.3, 1.0),
-        focal_crop_scale: Tuple[float, float] = (0.05, 0.3),
-        cj_prob: float = 0.8,
-        cj_strength: float = 1.0,
-        gaussian_blur: float = 0.5,
-        kernel_size: float = 0.1,
-        random_gray_scale: float = 0.2,
-        hf_prob: float = 0.5,
-        vf_prob: float = 0.0,
-        normalize: dict = imagenet_normalize,
+            self,
+            random_size: int = 224,
+            focal_size: int = 96,
+            random_views: int = 2,
+            focal_views: int = 10,
+            random_crop_scale: Tuple[float, float] = (0.3, 1.0),
+            focal_crop_scale: Tuple[float, float] = (0.05, 0.3),
+            cj_prob: float = 0.8,
+            cj_strength: float = 1.0,
+            gaussian_blur: float = 0.5,
+            kernel_size: float = 0.1,
+            random_gray_scale: float = 0.2,
+            hf_prob: float = 0.5,
+            vf_prob: float = 0.0,
+            normalize: dict = imagenet_normalize,
     ) -> None:
         color_jitter = T.ColorJitter(
             brightness=0.8 * cj_strength,
@@ -976,24 +1036,22 @@ class SMoGCollateFunction(MultiViewCollateFunction):
     """
 
     def __init__(
-        self,
-        crop_sizes: List[int] = [224, 96],
-        crop_counts: List[int] = [4, 4],
-        crop_min_scales: List[float] = [0.2, 0.05],
-        crop_max_scales: List[float] = [1.0, 0.2],
-        gaussian_blur_probs: List[float] = [0.5, 0.1],
-        gaussian_blur_kernel_sizes: List[float] = [0.1, 0.1],
-        solarize_probs: List[float] = [0.0, 0.2],
-        hf_prob: float = 0.5,
-        cj_prob: float = 1.0,
-        cj_strength: float = 0.5,
-        random_gray_scale: float = 0.2,
-        normalize: dict = imagenet_normalize,
+            self,
+            crop_sizes: List[int] = [224, 96],
+            crop_counts: List[int] = [4, 4],
+            crop_min_scales: List[float] = [0.2, 0.05],
+            crop_max_scales: List[float] = [1.0, 0.2],
+            gaussian_blur_probs: List[float] = [0.5, 0.1],
+            gaussian_blur_kernel_sizes: List[float] = [0.1, 0.1],
+            solarize_probs: List[float] = [0.0, 0.2],
+            hf_prob: float = 0.5,
+            cj_prob: float = 1.0,
+            cj_strength: float = 0.5,
+            random_gray_scale: float = 0.2,
+            normalize: dict = imagenet_normalize,
     ):
-
         transforms = []
         for i in range(len(crop_sizes)):
-
             random_resized_crop = T.RandomResizedCrop(
                 crop_sizes[i], scale=(crop_min_scales[i], crop_max_scales[i])
             )
@@ -1107,25 +1165,25 @@ class VICRegCollateFunction(BaseCollateFunction):
 
         transform = [T.RandomResizedCrop(size=input_size,
                                          scale=(min_scale, 1.0)),
-             _random_rotation_transform(rr_prob=rr_prob, rr_degrees=rr_degrees),
-             T.RandomHorizontalFlip(p=hf_prob),
-             T.RandomVerticalFlip(p=vf_prob),
-             T.RandomApply([color_jitter], p=cj_prob),
-             T.RandomGrayscale(p=random_gray_scale),
-             RandomSolarization(prob=solarize_prob),
-             GaussianBlur(
-                 kernel_size=kernel_size * input_size_,
-                 prob=gaussian_blur),
-             T.ToTensor()
-        ]
+                     _random_rotation_transform(rr_prob=rr_prob, rr_degrees=rr_degrees),
+                     T.RandomHorizontalFlip(p=hf_prob),
+                     T.RandomVerticalFlip(p=vf_prob),
+                     T.RandomApply([color_jitter], p=cj_prob),
+                     T.RandomGrayscale(p=random_gray_scale),
+                     RandomSolarization(prob=solarize_prob),
+                     GaussianBlur(
+                         kernel_size=kernel_size * input_size_,
+                         prob=gaussian_blur),
+                     T.ToTensor()
+                     ]
 
         if normalize:
             transform += [
-             T.Normalize(
-                mean=normalize['mean'],
-                std=normalize['std'])
-             ]
-           
+                T.Normalize(
+                    mean=normalize['mean'],
+                    std=normalize['std'])
+            ]
+
         transform = T.Compose(transform)
 
         super(VICRegCollateFunction, self).__init__(transform)
@@ -1172,24 +1230,24 @@ class VICRegLCollateFunction(nn.Module):
     """
 
     def __init__(
-        self,
-        global_crop_size: int = 224,
-        local_crop_size: int = 96,
-        global_crop_scale: Tuple[int] = (0.2, 1.0),
-        local_crop_scale: Tuple[int] = (0.05, 0.2),
-        global_grid_size: int = 7,
-        local_grid_size: int = 3,
-        global_gaussian_blur_prob: float = 0.5,
-        local_gaussian_blur_prob: float = 0.1,
-        global_gaussian_blur_kernel_size: float = 0.1,
-        local_gaussian_blur_kernel_size: float = 0.1,
-        global_solarize_prob: float = 0.0,
-        local_solarize_prob: float = 0.2,
-        hf_prob: float = 0.5,
-        cj_prob: float = 1.0,
-        cj_strength: float = 0.5,
-        random_gray_scale: float = 0.2,
-        normalize: dict = imagenet_normalize,
+            self,
+            global_crop_size: int = 224,
+            local_crop_size: int = 96,
+            global_crop_scale: Tuple[int] = (0.2, 1.0),
+            local_crop_scale: Tuple[int] = (0.05, 0.2),
+            global_grid_size: int = 7,
+            local_grid_size: int = 3,
+            global_gaussian_blur_prob: float = 0.5,
+            local_gaussian_blur_prob: float = 0.1,
+            global_gaussian_blur_kernel_size: float = 0.1,
+            local_gaussian_blur_kernel_size: float = 0.1,
+            global_solarize_prob: float = 0.0,
+            local_solarize_prob: float = 0.2,
+            hf_prob: float = 0.5,
+            cj_prob: float = 1.0,
+            cj_strength: float = 0.5,
+            random_gray_scale: float = 0.2,
+            normalize: dict = imagenet_normalize,
     ):
         super().__init__()
         self.global_crop_and_flip = RandomResizedCropAndFlip(
@@ -1242,13 +1300,12 @@ class VICRegLCollateFunction(nn.Module):
         )
 
     def forward(
-        self, batch: List[Tuple[Image.Image, int, str]]
+            self, batch: List[Tuple[Image.Image, int, str]]
     ) -> Tuple[
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
         torch.Tensor,
         torch.Tensor,
     ]:
-
         """
         Applies transforms to images in the input batch.
 
@@ -1289,8 +1346,8 @@ class VICRegLCollateFunction(nn.Module):
 
 
 def _random_rotation_transform(
-    rr_prob: float,
-    rr_degrees: Union[None, float, Tuple[float, float]],
+        rr_prob: float,
+        rr_degrees: Union[None, float, Tuple[float, float]],
 ) -> Union[RandomRotate, T.RandomApply]:
     if rr_degrees is None:
         # Random rotation by 90 degrees.
