@@ -138,6 +138,7 @@ else:
     else:
         args["batch_size"] = 4096 if dist else 2048
 
+args['MAE_baseLR'] = 0.0015
 args['accumulate_grad_batches'] = 8
 args["effective_bs"] = args["batch_size"] * args['accumulate_grad_batches']
 
@@ -1523,7 +1524,7 @@ class MAEModel(BenchmarkModule):
         )
         self.decoder = masked_autoencoder.MAEDecoder(
             seq_length=self.sequence_length,
-            num_layers=8,
+            num_layers=4, #TODO: tryout vals here
             num_heads=16,
             embed_input_dim=768,
             hidden_dim=decoder_dim,
@@ -1633,7 +1634,7 @@ class MAEModel(BenchmarkModule):
     def configure_optimizers(self):
         optim = torch.optim.AdamW(
             self.parameters(),
-            lr=1.5e-4 * lr_factor,
+            lr=args['MAE_baseLR'] * lr_factor,
             weight_decay=0.05,
             betas=(0.9, 0.95),
         )
