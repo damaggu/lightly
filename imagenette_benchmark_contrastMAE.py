@@ -518,8 +518,9 @@ elif args["dataset"] in ["medmnist", "ChestMNIST", "RetinaMNIST"]:
 
 # custom torchvision transform
 class CustomTransform:
-    def __init__(self, type='sobel'):
+    def __init__(self, type='sobel', with_shift=True):
         self.type = type
+        self.with_shift = with_shift
 
     def __call__(self, x):
         if self.type == 'sobel':
