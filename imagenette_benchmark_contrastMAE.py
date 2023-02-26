@@ -130,7 +130,7 @@ else:
     raise ValueError("Invalid dataset name")
 
 args["input_size"] = input_size
-args['flatten'] = True
+args['flatten'] = False
 args["num_workers"] = 6
 args["memory_bank_size"] = 4096
 if eli:
@@ -150,7 +150,7 @@ args['accumulate_grad_batches'] = 8
 args["effective_bs"] = args["batch_size"] * args['accumulate_grad_batches']
 
 if input_size == 224:
-    args["ft_batch_size"] = 256 if dist else 128
+    args["ft_batch_size"] = 256 if dist else 1024
 else:
     args["ft_batch_size"] = 4096 if dist else 2048
 
