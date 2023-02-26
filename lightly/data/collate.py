@@ -792,6 +792,8 @@ class FourierCollateFunction(MultiViewCollateFunction):
                 ret = np.fft.fftshift(ret)
             ret = np.log(np.abs(ret))
             ret = torch.from_numpy(ret)
+            # as float32
+            ret = ret.float()
             # plot ret[0]
             # import matplotlib.pyplot as plt
             # plt.imshow(ret[0].permute(1,2,0).detach().numpy())
