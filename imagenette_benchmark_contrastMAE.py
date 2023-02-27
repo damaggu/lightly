@@ -142,10 +142,10 @@ else:
     args["max_epochs"] = 800
     args["val_epoch"] = 10
     if input_size == 224:
-        args["batch_size"] = 128 if dist else 128
+        args["batch_size"] = 128 if dist else 8
     else:
         args["batch_size"] = 4096 if dist else 2048
-args['MAE_collate_type'] = 'normal'
+args['MAE_collate_type'] = 'canny'
 args['MAE_baseLR'] = 1.5e-4
 args['accumulate_grad_batches'] = 8
 args["effective_bs"] = args["batch_size"] * args['accumulate_grad_batches']
@@ -1561,7 +1561,7 @@ class MAEModel(BenchmarkModule):
         self.backbone = masked_autoencoder.MAEBackbone(
             image_size=input_size,
             patch_size=self.patch_size,
-            num_layers=1,
+            num_layers=12,
             num_heads=12,
             hidden_dim=768,
             mlp_dim=768 * 4,
@@ -1573,7 +1573,7 @@ class MAEModel(BenchmarkModule):
             embed_input_dim=768,
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
-            out_dim=self.patch_size ** 2 * 3,
+            out_dim=self.patch_size ** 2 * 1 if args['MAE_collate_type'] == 'canny' else self.patch_size ** 2 * 3,
             dropout=0,
             attention_dropout=0,
         )
@@ -1644,6 +1644,17 @@ class MAEModel(BenchmarkModule):
             # show_image(orginal_img_unpatched, 1, inv_normalize=inv_normalize, times_255=True)
 
             # orginial, target, reconstructed next to each other
+
+            if test_target_img.shape[0] == 1:
+                # repeat the first channel 3 times
+                test_target_img = test_target_img.repeat(3, 1, 1)
+            if reconstructed_img_unpatched.shape[0] == 1:
+                # repeat the first channel 3 times
+                reconstructed_img_unpatched = reconstructed_img_unpatched.repeat(3, 1, 1)
+            if orginal_img_unpatched.shape[0] == 1:
+                # repeat the first channel 3 times
+                orginal_img_unpatched = orginal_img_unpatched.repeat(3, 1, 1)
+
             concat_images = torch.cat((images[0], orginal_img_unpatched, test_target_img, reconstructed_img_unpatched), dim=2)
             # show_image(torch.cat((orginal_img_unpatched, test_target_img, reconstructed_img_unpatched), dim=2), 1, inv_normalize=inv_normalize, times_255=True)
 

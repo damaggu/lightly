@@ -433,10 +433,11 @@ def unpatchify(x, patch_size):
     p = patch_size
     h = w = int(x.shape[1] ** .5)
     assert h * w == x.shape[1]
+    C = int(x.shape[2] // p**2)
 
-    x = x.reshape(shape=(x.shape[0], h, w, p, p, 3))
+    x = x.reshape(shape=(x.shape[0], h, w, p, p, C))
     x = torch.einsum('nhwpqc->nchpwq', x)
-    imgs = x.reshape(shape=(x.shape[0], 3, h * p, h * p))
+    imgs = x.reshape(shape=(x.shape[0], C, h * p, h * p))
     return imgs
 
 def random_token_mask(
