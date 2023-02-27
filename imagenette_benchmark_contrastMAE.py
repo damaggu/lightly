@@ -106,9 +106,32 @@ run_name = parser.parse_args().run_name
 # )
 # print('done')
 
+# custom torchvision transform
+class CustomTransform:
+    def __init__(self, type='sobel', with_shift=True):
+        self.type = type
+        self.with_shift = with_shift
+
+    def __call__(self, x):
+        if self.type == 'sobel':
+            x = filters.sobel(x.unsqueeze(0))
+            x = x.squeeze(0)
+        elif self.type == 'fourier':
+            x = np.fft.fft2(x.unsqueeze(0).numpy())
+            if self.with_shift:
+                x = np.fft.fftshift(x)
+            x = np.log(np.abs(x))
+            x = torch.from_numpy(x)
+            x = x.float()
+            x = x.squeeze(0)
+        return x
+
+    def __repr__(self):
+        return f"CustomTransform({self.transform})"
+
 
 # wandb offline
-# os.environ['WANDB_MODE'] = 'offline'
+os.environ['WANDB_MODE'] = 'offline'
 
 import wandb
 
@@ -120,10 +143,11 @@ args = {}
 args["dataset"] = "imagenette"
 
 if args["dataset"] == "cifar10" or args["dataset"] == "imagenette":
-    # input_size = 128
-    input_size = 224
+    # input_size = 224
+    input_size = 112
 elif args["dataset"] in ["iNat2021mini", "inat_birds"]:
-    input_size = 224
+    # input_size = 224
+    input_size = 128
 elif args["dataset"] in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
     # input_size = 28
     input_size = 224
@@ -144,16 +168,49 @@ else:
     if input_size == 224:
         args["batch_size"] = 128 if dist else 128
     else:
-        args["batch_size"] = 4096 if dist else 2048
+        args["batch_size"] = 4096 if dist else 128
 args['MAE_collate_type'] = 'canny'
 args['MAE_baseLR'] = 1.5e-4
 args['accumulate_grad_batches'] = 8
 args["effective_bs"] = args["batch_size"] * args['accumulate_grad_batches']
 
-if input_size == 224:
-    args["ft_batch_size"] = 256 if dist else 1024
+ratio = input_size / 224
+args["ft_batch_size"] = 256 if dist else 1024
+args["warmup_epochs"] = 10
+args["mae_masking_ratio"] = 0.75
+args["patch_size"] = 16
+args["patch_size"] = int(args["patch_size"] * ratio)
+
+# vit settings
+args["vit_name"] = "vit_tiny"
+
+if args["vit_name"] == "vit_base":
+    args["vit_dim"] = 768
+    args["vit_depth"] = 12
+    args["vit_heads"] = 12
+    args["vit_mlp_dim"] = 4 * args["vit_dim"]
+    args["vit_decoder_dim"] = 512
+    args["vit_decoder_layers"] = 4
+    args["vit_decoder_heads"] = 8
+elif args["vit_name"] == "vit_small":
+    args["vit_dim"] = 384
+    args["vit_depth"] = 8
+    args["vit_heads"] = 6
+    args["vit_mlp_dim"] = 4 * args["vit_dim"]
+    args["vit_decoder_dim"] = 256
+    args["vit_decoder_layers"] = 2
+    args["vit_decoder_heads"] = 4
+elif args["vit_name"] == "vit_tiny":
+    args["vit_dim"] = 192
+    args["vit_depth"] = 4
+    args["vit_heads"] = 3
+    args["vit_mlp_dim"] = 4 * args["vit_dim"]
+    args["vit_decoder_dim"] = 128
+    args["vit_decoder_layers"] = 1
+    args["vit_decoder_heads"] = 2
 else:
-    args["ft_batch_size"] = 4096 if dist else 2048
+    raise ValueError("Invalid vit name")
+
 
 gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
 if dist:
@@ -161,10 +218,8 @@ if dist:
     args['batch_size'] = args['batch_size'] * gpus
     args['ft_batch_size'] = args['ft_batch_size'] * gpus
 
-args["warmup_epochs"] = 10
-args["mae_masking_ratio"] = 0.75
+
 args["msn_masking_ratio"] = 0.15
-args["patch_size"] = 16
 args["do_probing"] = False
 args["do_kNN"] = True
 args["do_medmnist"] = False
@@ -270,286 +325,68 @@ inv_normalize = torchvision.transforms.Normalize(
     std=[1 / 0.229, 1 / 0.224, 1 / 0.255],
 )
 
-# Use SimCLR augmentations
-if args["dataset"] == "imagenette":
 
-    if input_size == 128:
-        collate_fn = lightly.data.SimCLRCollateFunction(
-            input_size=input_size,
-        )
-        if byol_mode == "v1" or byol_mode == "v2" or byol_mode == "v3":
-            # import Normalize from torchvision transforms
-            collate_fn = lightly.data.SimCLRCollateFunction(
-                input_size=input_size,
-                normalize={
-                    "mean": (0.48145466, 0.4578275, 0.40821073),
-                    "std": (0.26862954, 0.26130258, 0.27577711),
-                },
-            )
+local_patch_size = int(input_size * ratio)
+ratio2 = 256 / 224
+resize_size = int(input_size * ratio2)
 
-        # Multi crop augmentation for SwAV
-        swav_collate_fn = lightly.data.SwaVCollateFunction(
-            crop_sizes=[128, 64],
-            crop_counts=[2, 6],  # 2 crops @ 128x128px and 6 crops @ 64x64px
-        )
-
-        # Multi crop augmentation for DINO, additionally, disable blur for cifar10
-        dino_collate_fn = lightly.data.DINOCollateFunction(
-            global_crop_size=128,
-            local_crop_size=64,
-        )
-
-        # Two crops for SMoG
-        smog_collate_function = lightly.data.collate.SMoGCollateFunction(
-            crop_sizes=[128, 128],
-            crop_counts=[1, 1],
-            crop_min_scales=[0.2, 0.2],
-            crop_max_scales=[1.0, 1.0],
-        )
-        # Collate function passing geometrical transformation for VICRegL
-        vicregl_collate_fn = lightly.data.VICRegLCollateFunction(
-            global_crop_size=128, local_crop_size=64, global_grid_size=4, local_grid_size=2
-        )
-        msn_collate_fn = lightly.data.MSNCollateFunction(random_size=128, focal_size=64)
-
-        vqgan_collate_fn = lightly.data.MAECollateFunction(normalize=None, input_size=128)
-
-        # No additional augmentations for the test set
-        test_transforms = torchvision.transforms.Compose(
-            [
-                torchvision.transforms.Resize(input_size),
-                torchvision.transforms.CenterCrop(128),
-                torchvision.transforms.ToTensor(),
-                normalize_transform,
-            ]
-        )
-    elif input_size == 224:
-        collate_fn = lightly.data.SimCLRCollateFunction(
-            input_size=input_size,
-        )
-        if byol_mode == "v1" or byol_mode == "v2" or byol_mode == "v3":
-            # import Normalize from torchvision transforms
-            collate_fn = lightly.data.SimCLRCollateFunction(
-                input_size=input_size,
-                normalize={
-                    "mean": (0.48145466, 0.4578275, 0.40821073),
-                    "std": (0.26862954, 0.26130258, 0.27577711),
-                },
-            )
-        swav_collate_fn = lightly.data.SwaVCollateFunction(
-            crop_sizes=[224, 96],
-            crop_counts=[2, 6],  # 2 crops @ 224x224px and 6 crops @ 96x96px
-        )
-        dinocollate_fn = lightly.data.DINOCollateFunction(
-            global_crop_size=224,
-            local_crop_size=96,
-        )
-        smog_collate_function = lightly.data.collate.SMoGCollateFunction(
-            crop_sizes=[224, 224],
-            crop_counts=[1, 1],
-            crop_min_scales=[0.2, 0.2],
-            crop_max_scales=[1.0, 1.0],
-        )
-        vicregl_collate_fn = lightly.data.VICRegLCollateFunction(
-            global_crop_size=224, local_crop_size=96, global_grid_size=7, local_grid_size=3
-        )
-        msn_collate_fn = lightly.data.MSNCollateFunction(random_size=224, focal_size=96)
-        vqgan_collate_fn = lightly.data.MAECollateFunction(normalize=None, input_size=224)
-        test_transforms = torchvision.transforms.Compose(
-            [
-                torchvision.transforms.Resize(input_size),
-                torchvision.transforms.CenterCrop(224),
-                torchvision.transforms.ToTensor(),
-                normalize_transform,
-            ]
-        )
-
-
-elif args["dataset"] == "cifar10":
+if args["dataset"] in ["iNat2021mini", "inat_birds"]:
+    # imagenet
     collate_fn = lightly.data.SimCLRCollateFunction(
-        input_size=32,
-        gaussian_blur=0.0,
+        input_size=input_size,
     )
-
-    # Multi crop augmentation for SwAV, additionally, disable blur for cifar10
-    swav_collate_fn = lightly.data.SwaVCollateFunction(
-        crop_sizes=[32],
-        crop_counts=[2],  # 2 crops @ 32x32px
-        crop_min_scales=[0.14],
-        gaussian_blur=0,
-    )
-
-    # Multi crop augmentation for DINO, additionally, disable blur for cifar10
-    dino_collate_fn = lightly.data.DINOCollateFunction(
-        global_crop_size=32,
-        n_local_views=0,
-        gaussian_blur=(0, 0, 0),
-    )
-
-    # Two crops for SMoG
-    smog_collate_function = lightly.data.collate.SMoGCollateFunction(
-        crop_sizes=[32, 32],
-        crop_counts=[1, 1],
-        gaussian_blur_probs=[0.0, 0.0],
-        crop_min_scales=[0.2, 0.2],
-        crop_max_scales=[1.0, 1.0],
-    )
-elif args["dataset"] in ["iNat2021mini", "inat_birds"]:
+else:
     collate_fn = lightly.data.SimCLRCollateFunction(
         input_size=input_size,
         gaussian_blur=0.0,  # from eli's paper
     )
 
-    # Multi crop augmentation for SwAV
-    swav_collate_fn = lightly.data.SwaVCollateFunction(
-        crop_sizes=[224, 96],  # from paper
-        crop_counts=[2, 6],  # 2 crops @ 128x128px and 6 crops @ 64x64px
-    )
+# Multi crop augmentation for SwAV
+swav_collate_fn = lightly.data.SwaVCollateFunction(
+    crop_sizes=[input_size, local_patch_size],
+    crop_counts=[2, 6],  # 2 crops @ 128x128px and 6 crops @ 64x64px
+)
 
-    # Multi crop augmentation for DINO, additionally, disable blur for cifar10
-    dino_collate_fn = lightly.data.DINOCollateFunction(
-        global_crop_size=224,
-        local_crop_size=96,
-    )
+# Multi crop augmentation for DINO, additionally, disable blur for cifar10
+dino_collate_fn = lightly.data.DINOCollateFunction(
+    global_crop_size=input_size,
+    local_crop_size=local_patch_size,
+)
 
-    # Two crops for SMoG
-    smog_collate_function = lightly.data.collate.SMoGCollateFunction(
-        crop_sizes=[128, 128],
-        crop_counts=[1, 1],
-        crop_min_scales=[0.2, 0.2],
-        crop_max_scales=[1.0, 1.0],
-    )
-    # Collate function passing geometrical transformation for VICRegL
-    vicregl_collate_fn = lightly.data.VICRegLCollateFunction(
-        global_crop_size=224, local_crop_size=96, global_grid_size=4, local_grid_size=2
-    )
-    msn_collate_fn = lightly.data.MSNCollateFunction(random_size=224, focal_size=96)
-    # No additional augmentations for the test set
-    test_transforms = torchvision.transforms.Compose(
-        [
-            torchvision.transforms.Resize(256),
-            torchvision.transforms.CenterCrop(224),
-            torchvision.transforms.ToTensor(),
-            normalize_transform,
-        ]
-    )
-elif args["dataset"] in ["medmnist", "ChestMNIST", "RetinaMNIST"]:
-    if input_size == 224:
-        collate_fn = lightly.data.SimCLRCollateFunction(
-            input_size=input_size,
-            gaussian_blur=0.0,  # from eli's paper
-        )
+# Two crops for SMoG
+smog_collate_function = lightly.data.collate.SMoGCollateFunction(
+    crop_sizes=[input_size, local_patch_size],
+    crop_counts=[1, 1],
+    crop_min_scales=[0.2, 0.2],
+    crop_max_scales=[1.0, 1.0],
+)
+# Collate function passing geometrical transformation for VICRegL
+vicregl_collate_fn = lightly.data.VICRegLCollateFunction(
+    global_crop_size=input_size, local_crop_size=local_patch_size, global_grid_size=4, local_grid_size=2
+)
+msn_collate_fn = lightly.data.MSNCollateFunction(random_size=input_size, focal_size=local_patch_size)
+# No additional augmentations for the test set
+test_transforms = torchvision.transforms.Compose(
+    [
+        torchvision.transforms.Resize(resize_size),
+        torchvision.transforms.CenterCrop(input_size),
+        torchvision.transforms.ToTensor(),
+        normalize_transform,
+    ]
+)
 
-        # Multi crop augmentation for SwAV
-        swav_collate_fn = lightly.data.SwaVCollateFunction(
-            crop_sizes=[224, 96],  # from paper
-            crop_counts=[2, 6],  # 2 crops @ 128x128px and 6 crops @ 64x64px
-        )
-
-        # Multi crop augmentation for DINO, additionally, disable blur for cifar10
-        dino_collate_fn = lightly.data.DINOCollateFunction(
-            global_crop_size=224,
-            local_crop_size=96,
-        )
-
-        # Two crops for SMoG
-        smog_collate_function = lightly.data.collate.SMoGCollateFunction(
-            crop_sizes=[128, 128],
-            crop_counts=[1, 1],
-            crop_min_scales=[0.2, 0.2],
-            crop_max_scales=[1.0, 1.0],
-        )
-        # Collate function passing geometrical transformation for VICRegL
-        vicregl_collate_fn = lightly.data.VICRegLCollateFunction(
-            global_crop_size=224, local_crop_size=96, global_grid_size=4, local_grid_size=2
-        )
-        msn_collate_fn = lightly.data.MSNCollateFunction(random_size=224, focal_size=96)
-        # No additional augmentations for the test set
-        test_transforms = torchvision.transforms.Compose(
-            [
-                torchvision.transforms.Resize(224),
-                # torchvision.transforms.CenterCrop(224),
-                torchvision.transforms.ToTensor(),
-                normalize_transform,
-            ]
-        )
-    elif input_size == 28:
-        collate_fn = lightly.data.SimCLRCollateFunction(
-            input_size=28,
-            gaussian_blur=0.0,
-        )
-
-        # Multi crop augmentation for SwAV
-        swav_collate_fn = lightly.data.SwaVCollateFunction(
-            crop_sizes=[28, 12],
-            crop_counts=[2, 6]  # 2 crops @ 128x128px and 6 crops @ 64x64px
-        )
-
-        # Multi crop augmentation for DINO, additionally, disable blur for cifar10
-        dino_collate_fn = lightly.data.DINOCollateFunction(
-            global_crop_size=28,
-            local_crop_size=12,
-        )
-
-        # Two crops for SMoG
-        smog_collate_function = lightly.data.collate.SMoGCollateFunction(
-            crop_sizes=[16, 16],
-            crop_counts=[1, 1],
-            crop_min_scales=[0.2, 0.2],
-            crop_max_scales=[1.0, 1.0],
-        )
-        # Collate function passing geometrical transformation for VICRegL
-        vicregl_collate_fn = lightly.data.VICRegLCollateFunction(
-            global_crop_size=28, local_crop_size=12, global_grid_size=4, local_grid_size=2
-        )
-        msn_collate_fn = lightly.data.MSNCollateFunction(random_size=28, focal_size=12)
-        # No additional augmentations for the test set
-        test_transforms = torchvision.transforms.Compose(
-            [
-                torchvision.transforms.Resize(input_size),
-                # torchvision.transforms.CenterCrop(28),
-                torchvision.transforms.ToTensor(),
-                normalize_transform,
-            ]
-        )
-    else:
-        raise NotImplementedError
-
-
-# custom torchvision transform
-class CustomTransform:
-    def __init__(self, type='sobel', with_shift=True):
-        self.type = type
-        self.with_shift = with_shift
-
-    def __call__(self, x):
-        if self.type == 'sobel':
-            x = filters.sobel(x.unsqueeze(0))
-            x = x.squeeze(0)
-        elif self.type == 'fourier':
-            x = np.fft.fft2(x.unsqueeze(0).numpy())
-            if self.with_shift:
-                x = np.fft.fftshift(x)
-            x = np.log(np.abs(x))
-            x = torch.from_numpy(x)
-            x = x.float()
-            x = x.squeeze(0)
-        return x
-
-    def __repr__(self):
-        return f"CustomTransform({self.transform})"
-
+vqgan_collate_fn = lightly.data.MAECollateFunction(normalize=None, input_size=input_size)
 
 #  Single crop augmentation for MAE
 # mae_collate_fn = lightly.data.MAECollateFunction()
 if args['MAE_collate_type'] == 'normal':
-    mae_collate_fn = lightly.data.MAECollateFunction()
+    mae_collate_fn = lightly.data.MAECollateFunction(input_size=input_size)
 else:
-    mae_collate_fn = lightly.data.FourierCollateFunction(type=args['MAE_collate_type'])
+    mae_collate_fn = lightly.data.FourierCollateFunction(type=args['MAE_collate_type'], input_size=input_size)
     test_transforms = torchvision.transforms.Compose(
         [
-            torchvision.transforms.Resize(256),
-            torchvision.transforms.CenterCrop(224),
+            torchvision.transforms.Resize(resize_size),
+            torchvision.transforms.CenterCrop(input_size),
             torchvision.transforms.ToTensor(),
             normalize_transform,
             CustomTransform(type=args['MAE_collate_type'])
@@ -1549,7 +1386,7 @@ class MAEModel(BenchmarkModule):
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
         )
 
-        decoder_dim = 512
+        decoder_dim = args["vit_decoder_dim"]
         # vit = torchvision.models.vit_b_32(pretrained=False)
 
         self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
@@ -1561,16 +1398,16 @@ class MAEModel(BenchmarkModule):
         self.backbone = masked_autoencoder.MAEBackbone(
             image_size=input_size,
             patch_size=self.patch_size,
-            num_layers=12,
-            num_heads=12,
-            hidden_dim=768,
-            mlp_dim=768 * 4,
+            num_layers=args["vit_depth"],
+            num_heads=args["vit_heads"],
+            hidden_dim=args["vit_dim"],
+            mlp_dim=args["vit_mlp_dim"],
         )
         self.decoder = masked_autoencoder.MAEDecoder(
             seq_length=self.sequence_length,
-            num_layers=4, #TODO: tryout vals here
-            num_heads=16,
-            embed_input_dim=768,
+            num_layers=args["vit_decoder_layers"], #TODO: tryout vals here
+            num_heads=args["vit_decoder_heads"],
+            embed_input_dim=args["vit_dim"],
             hidden_dim=decoder_dim,
             mlp_dim=decoder_dim * 4,
             out_dim=self.patch_size ** 2 * 1 if args['MAE_collate_type'] == 'canny' else self.patch_size ** 2 * 3,
@@ -1671,6 +1508,7 @@ class MAEModel(BenchmarkModule):
             plt.xlabel('batch')
             plt.ylabel('loss')
             plt.title(f'Loss vs. Batches, epoch {self.current_epoch}')
+            plt.show()
 
             buf = io.BytesIO()
             plt.savefig(buf, format='png')
