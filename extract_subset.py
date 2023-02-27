@@ -1,5 +1,5 @@
 import json
-
+#
 '''
 Links to download JSONs:
 https://ml-inat-competition-datasets.s3.amazonaws.com/2021/train.json.tar.gz
@@ -23,16 +23,16 @@ with open(path_to_labels, 'r') as f:
     D = json.load(f)
 
 '''
-Note: All JSON files (train.json, train_mini.json, val.json, etc.) should have 
+Note: All JSON files (train.json, train_mini.json, val.json, etc.) should have
 the same values for D['categories'], since this is just category metadata and
-all of them have the same categories. 
+all of them have the same categories.
 '''
 
 '''
-It happens to be true that the entries of D['categories'] are sorted, so 
-that the metadata for category_id j can be found in position j. Not always the 
+It happens to be true that the entries of D['categories'] are sorted, so
+that the metadata for category_id j can be found in position j. Not always the
 case for COCO-formatted data, but following block demonstrates that it's true
-here. 
+here.
 '''
 for i in range(len(D['categories'])):
     assert i == D['categories'][i]['id']
@@ -46,17 +46,17 @@ assert len(D['annotations']) == len(D['images'])
 for i in range(len(D['annotations'])):
     assert D['annotations'][i]['image_id'] == D['images'][i]['id']
 
-# Grab bird category IDs: 
+# Grab bird category IDs:
 bird_category_id_list = []
 for i in range(len(D['categories'])):
     if D['categories'][i]['class'] == 'Aves':
-        bird_category_id_list.append(i) 
-        # We can use i because we know that it's the same as the category ID, 
+        bird_category_id_list.append(i)
+        # We can use i because we know that it's the same as the category ID,
         # see comments above.
 print(f'# categories: {len(bird_category_id_list)}')
 
 # Get list of image IDs that correspond to bird categories:
-# Note, the image IDs do not correspond to indices - i.e.  D['images'][i]['id'] != i. 
+# Note, the image IDs do not correspond to indices - i.e.  D['images'][i]['id'] != i.
 bird_image_id_list = []
 for i in range(len(D['annotations'])):
     if D['annotations'][i]['category_id'] in bird_category_id_list:
