@@ -798,6 +798,21 @@ class FourierCollateFunction(MultiViewCollateFunction):
             # import matplotlib.pyplot as plt
             # plt.imshow(ret[0].permute(1,2,0).detach().numpy())
             # plt.show()
+        elif self.type == 'canny':
+
+            a,b = filters.canny(ret, sigma=(2, 2), low_threshold=0.2, high_threshold=0.9, kernel_size=(9, 9))
+            # blur gaussian 2d
+            ret = filters.gaussian_blur2d(a, sigma=(2,2), kernel_size=(3,3))
+            b = filters.gaussian_blur2d(b, sigma=(2,2), kernel_size=(3,3))
+
+            # plt.imshow(views[0][image_id].permute(1,2,0).detach().numpy())
+            # plt.show()
+            # plt.imshow(a[image_id].permute(1,2,0).detach().numpy())
+            # plt.show()
+            # plt.imshow(b[image_id].permute(1,2,0).detach().numpy())
+            # plt.show()
+
+
         return torch.stack([views[0], ret]), labels, fnames
 
 class PIRLCollateFunction(nn.Module):
