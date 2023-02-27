@@ -89,6 +89,7 @@ from PIL import Image
 
 # simple arg parser
 import argparse as ap
+
 parser = ap.ArgumentParser()
 parser.add_argument('--run_name', type=str, default='')
 
@@ -144,7 +145,7 @@ else:
         args["batch_size"] = 128 if dist else 128
     else:
         args["batch_size"] = 4096 if dist else 2048
-args['MAE_collate_type'] = 'fourier'
+args['MAE_collate_type'] = 'sobel'
 args['MAE_baseLR'] = 1.5e-4
 args['accumulate_grad_batches'] = 8
 args["effective_bs"] = args["batch_size"] * args['accumulate_grad_batches']
@@ -154,13 +155,11 @@ if input_size == 224:
 else:
     args["ft_batch_size"] = 4096 if dist else 2048
 
-
 gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
 if dist:
     args["gpus"] = gpus
     args['batch_size'] = args['batch_size'] * gpus
     args['ft_batch_size'] = args['ft_batch_size'] * gpus
-
 
 args["warmup_epochs"] = 10
 args["mae_masking_ratio"] = 0.75
@@ -515,6 +514,7 @@ elif args["dataset"] in ["medmnist", "ChestMNIST", "RetinaMNIST"]:
         )
     else:
         raise NotImplementedError
+
 
 # custom torchvision transform
 class CustomTransform:
@@ -1611,7 +1611,11 @@ class MAEModel(BenchmarkModule):
         return x_pred
 
     def training_step(self, batch, batch_idx):
-        images, _, _ = batch
+        targets = None
+        try:
+            (images, targets), _, _ = batch
+        except:
+            images, _, _ = batch
 
         batch_size = images.shape[0]
         idx_keep, idx_mask = utils.random_token_mask(
@@ -1623,11 +1627,12 @@ class MAEModel(BenchmarkModule):
         x_pred = self.forward_decoder(x_encoded, idx_keep, idx_mask)
 
         # get image patches for masked tokens
-        patches = utils.patchify(images, self.patch_size)
+        if targets is None:
+            patches = utils.patchify(images, self.patch_size)
+        else:
+            patches = utils.patchify(targets, self.patch_size)
         # must adjust idx_mask for missing class token
         target = utils.get_at_index(patches, idx_mask - 1)
-
-
 
         # target_img = utils.set_at_index(patches, idx_mask - 1, x_pred)
 
@@ -1650,7 +1655,7 @@ class MAEModel(BenchmarkModule):
             # show_image(orginal_img_unpatched, 1, inv_normalize=inv_normalize, times_255=True)
 
             # orginial, target, reconstructed next to each other
-            concat_images = torch.cat((orginal_img_unpatched, test_target_img, reconstructed_img_unpatched), dim=2)
+            concat_images = torch.cat((images[0], orginal_img_unpatched, test_target_img, reconstructed_img_unpatched), dim=2)
             # show_image(torch.cat((orginal_img_unpatched, test_target_img, reconstructed_img_unpatched), dim=2), 1, inv_normalize=inv_normalize, times_255=True)
 
             concat_images = concat_images.unsqueeze(0)
@@ -2735,7 +2740,7 @@ models = [
     # SwaVModel,
     # DINOModel,
     # BYOLModel, # bs 256; ft 128
-    MAEModel, # bs 256; ft 64
+    MAEModel,  # bs 256; ft 64
     # MSNModel,
     # SimCLRModel,
     # TiCoModel,
@@ -2893,7 +2898,7 @@ for BenchmarkModel in models:
                 check_val_every_n_epoch=args["val_epoch"],
                 limit_train_batches=1 if test else None,
                 limit_val_batches=1 if test else None,
-                accumulate_grad_batches = args["accumulate_grad_batches"],
+                accumulate_grad_batches=args["accumulate_grad_batches"],
                 # accelerator="cpu",
                 # num_processes=0,
                 # callbacks=[checkpoint_callback]

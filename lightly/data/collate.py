@@ -798,8 +798,7 @@ class FourierCollateFunction(MultiViewCollateFunction):
             # import matplotlib.pyplot as plt
             # plt.imshow(ret[0].permute(1,2,0).detach().numpy())
             # plt.show()
-        return ret, labels, fnames
-
+        return torch.stack([views[0], ret]), labels, fnames
 
 class PIRLCollateFunction(nn.Module):
     """Implements the transformations for PIRL [0]. The jigsaw augmentation
