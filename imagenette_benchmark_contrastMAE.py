@@ -165,7 +165,7 @@ args["warmup_epochs"] = 10
 args["mae_masking_ratio"] = 0.75
 args["msn_masking_ratio"] = 0.15
 args["patch_size"] = 16
-args["do_probing"] = True
+args["do_probing"] = False
 args["do_kNN"] = True
 args["do_medmnist"] = False
 args["knn_k"] = 200
@@ -189,10 +189,10 @@ args["milestones_medmnist"] = [
 args["weight_decay"] = 0
 args["blr"] = 0.1
 args["lr"] = args["blr"] * args["ft_batch_size"] / 256
-args["epochs"] = 100
+args["epochs"] = 2
 args["clip_grad"] = 1.0
 args["accum_iter"] = 1
-args["model_dim"] = 512
+args["model_dim"] = 2048
 args["is_3d"] = False
 args["min_lr"] = 0.00001
 
@@ -226,7 +226,7 @@ byol_mode = "v0"
 # args["dataset"]  = 'RetinaMNIST'
 # args["dataset"]  = 'BreastMNIST'
 project_name = args["dataset"] + "_benchmark_correctedK"
-log_model = True
+log_model = 'all'
 
 #### linear probing args
 
@@ -2875,11 +2875,12 @@ for BenchmarkModel in models:
             # if experiment_version is None:
             #     # Save results of all models under same version directory
             #     experiment_version = logger.version
-            # checkpoint_callback = pl.callbacks.ModelCheckpoint(
-            #     dirpath=os.path.join(logger.log_dir, 'checkpoints')
-            # )
+            log_path = os.path.join(wandb_logger.experiment.dir, 'checkpoints')
+            checkpoint_callback = pl.callbacks.ModelCheckpoint(
+                dirpath=log_path
+            )
 
-            wandb_logger.watch(benchmark_model, log_graph=False, log="all", log_freq=5)
+            wandb_logger.watch(benchmark_model, log_graph=False, log="all", log_freq=1)
 
             # trainer = pl.Trainer(
             #     args["max_epochs"]=args["max_epochs"],
@@ -2899,9 +2900,9 @@ for BenchmarkModel in models:
                 limit_train_batches=1 if test else None,
                 limit_val_batches=1 if test else None,
                 accumulate_grad_batches=args["accumulate_grad_batches"],
+                callbacks=[checkpoint_callback],
                 # accelerator="cpu",
                 # num_processes=0,
-                # callbacks=[checkpoint_callback]
             )
             start = time.time()
             trainer.fit(
