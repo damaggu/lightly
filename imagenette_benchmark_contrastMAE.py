@@ -147,7 +147,7 @@ if args["dataset"] == "cifar10" or args["dataset"] == "imagenette":
     input_size = 112
 elif args["dataset"] in ["iNat2021mini", "inat_birds"]:
     # input_size = 224
-    input_size = 128
+    input_size = 112
 elif args["dataset"] in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
     # input_size = 28
     input_size = 224
@@ -280,7 +280,7 @@ byol_mode = "v0"
 # args["dataset"]  = 'iNat2021mini'
 # args["dataset"]  = 'RetinaMNIST'
 # args["dataset"]  = 'BreastMNIST'
-project_name = args["dataset"] + "_benchmark_correctedK"
+project_name = args["dataset"] + "_benchmark_Tiny"
 log_model = 'all'
 
 #### linear probing args
@@ -2604,7 +2604,7 @@ for BenchmarkModel in models:
 
         if model_name == 'MAE' or model_name == 'MSN' or model_name == 'SimMIM':
             # args update model dim
-            args.update({"model_dim": 768})
+            args.update({"model_dim": args["vit_dim"]})
             args.update({"flatten": False})
 
         # if model_name == 'SimCLR':
