@@ -800,10 +800,10 @@ class FourierCollateFunction(MultiViewCollateFunction):
             # plt.show()
         elif self.type == 'canny':
 
-            a,b = filters.canny(ret, sigma=(2, 2), low_threshold=0.2, high_threshold=0.9, kernel_size=(9, 9))
+            a, b = filters.canny(ret, sigma=(2, 2), low_threshold=0.2, high_threshold=0.9, kernel_size=(9, 9))
             # blur gaussian 2d
-            ret = filters.gaussian_blur2d(a, sigma=(2,2), kernel_size=(3,3))
-            b = filters.gaussian_blur2d(b, sigma=(2,2), kernel_size=(3,3))
+            ret = filters.gaussian_blur2d(a, sigma=(2, 2), kernel_size=(3, 3))
+            b = filters.gaussian_blur2d(b, sigma=(2, 2), kernel_size=(3, 3))
 
             # plt.imshow(views[0][image_id].permute(1,2,0).detach().numpy())
             # plt.show()
@@ -812,8 +812,8 @@ class FourierCollateFunction(MultiViewCollateFunction):
             # plt.imshow(b[image_id].permute(1,2,0).detach().numpy())
             # plt.show()
 
+        return (views[0], ret), labels, fnames
 
-        return torch.stack([views[0], ret]), labels, fnames
 
 class PIRLCollateFunction(nn.Module):
     """Implements the transformations for PIRL [0]. The jigsaw augmentation
