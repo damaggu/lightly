@@ -142,7 +142,7 @@ else:
     args["max_epochs"] = 800
     args["val_epoch"] = 10
     if input_size == 224:
-        args["batch_size"] = 128 if dist else 8
+        args["batch_size"] = 128 if dist else 128
     else:
         args["batch_size"] = 4096 if dist else 2048
 args['MAE_collate_type'] = 'canny'
