@@ -130,7 +130,7 @@ else:
     raise ValueError("Invalid dataset name")
 
 args["input_size"] = input_size
-args['flatten'] = False
+args['flatten'] = True
 args["num_workers"] = 6
 args["memory_bank_size"] = 4096
 if eli:
@@ -139,7 +139,7 @@ if eli:
     args["val_epoch"] = 50
 else:
     args["max_epochs"] = 800
-    args["val_epoch"] = 1
+    args["val_epoch"] = 10
     if input_size == 224:
         args["batch_size"] = 128 if dist else 128
     else:
@@ -166,7 +166,7 @@ args["warmup_epochs"] = 10
 args["mae_masking_ratio"] = 0.75
 args["msn_masking_ratio"] = 0.15
 args["patch_size"] = 16
-args["do_probing"] = False
+args["do_probing"] = True
 args["do_kNN"] = True
 args["do_medmnist"] = False
 args["knn_k"] = 200

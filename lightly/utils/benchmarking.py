@@ -406,8 +406,8 @@ class BenchmarkModule(LightningModule):
             print(f"Current kNN accuracy: {acc * 100.0:.2f} %")
             # also perform linear probing
             # with torch.no_grad():
-
-        if self.args['do_probing'] and current_epoch % self.args['val_epoch'] == 0:
+        #TODO: fix hack
+        if self.args['do_probing'] and (current_epoch-1) % self.args['val_epoch'] == 0:
             torch.set_grad_enabled(True)
 
             # if the model is MAEModel
