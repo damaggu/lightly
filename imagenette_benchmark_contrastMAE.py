@@ -145,7 +145,7 @@ else:
         args["batch_size"] = 128 if dist else 128
     else:
         args["batch_size"] = 4096 if dist else 2048
-args['MAE_collate_type'] = 'sobel'
+args['MAE_collate_type'] = 'normal'
 args['MAE_baseLR'] = 1.5e-4
 args['accumulate_grad_batches'] = 8
 args["effective_bs"] = args["batch_size"] * args['accumulate_grad_batches']
@@ -542,30 +542,19 @@ class CustomTransform:
 
 #  Single crop augmentation for MAE
 # mae_collate_fn = lightly.data.MAECollateFunction()
-if args['MAE_collate_type'] == 'sobel':
-    mae_collate_fn = lightly.data.FourierCollateFunction(type='sobel')
-    test_transforms = torchvision.transforms.Compose(
-        [
-            torchvision.transforms.Resize(256),
-            torchvision.transforms.CenterCrop(224),
-            torchvision.transforms.ToTensor(),
-            normalize_transform,
-            CustomTransform(type='sobel')
-        ]
-    )
-elif args['MAE_collate_type'] == 'fourier':
-    mae_collate_fn = lightly.data.FourierCollateFunction(type='fourier')
-    test_transforms = torchvision.transforms.Compose(
-        [
-            torchvision.transforms.Resize(256),
-            torchvision.transforms.CenterCrop(224),
-            torchvision.transforms.ToTensor(),
-            normalize_transform,
-            CustomTransform(type='fourier')
-        ]
-    )
-else:
+if args['MAE_collate_type'] == 'normal':
     mae_collate_fn = lightly.data.MAECollateFunction()
+else:
+    mae_collate_fn = lightly.data.FourierCollateFunction(type=args['MAE_collate_type'])
+    test_transforms = torchvision.transforms.Compose(
+        [
+            torchvision.transforms.Resize(256),
+            torchvision.transforms.CenterCrop(224),
+            torchvision.transforms.ToTensor(),
+            normalize_transform,
+            CustomTransform(type=args['MAE_collate_type'])
+        ]
+    )
 
 if args["dataset"] == "imagenette":
     path_to_train = "./datasets/imagenette2-160/train/"
@@ -1572,7 +1561,7 @@ class MAEModel(BenchmarkModule):
         self.backbone = masked_autoencoder.MAEBackbone(
             image_size=input_size,
             patch_size=self.patch_size,
-            num_layers=12,
+            num_layers=1,
             num_heads=12,
             hidden_dim=768,
             mlp_dim=768 * 4,
