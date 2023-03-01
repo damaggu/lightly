@@ -149,14 +149,14 @@ elif args["dataset"] in ["iNat2021mini", "inat_birds"]:
     # input_size = 224
     input_size = 112
 elif args["dataset"] in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
-    # input_size = 28
-    input_size = 224
+    input_size = 28
+    # input_size = 224
 else:
     raise ValueError("Invalid dataset name")
 
 args["input_size"] = input_size
 args['flatten'] = True
-args["num_workers"] = 6
+args["num_workers"] = 10
 args["memory_bank_size"] = 4096
 if eli:
     args["batch_size"] = 4096
@@ -169,7 +169,7 @@ else:
         args["batch_size"] = 128 if dist else 128
     else:
         args["batch_size"] = 4096 if dist else 128
-args['MAE_collate_type'] = 'canny'
+args['MAE_collate_type'] = 'normal'
 args['MAE_baseLR'] = 1.5e-4
 args['accumulate_grad_batches'] = 8
 args["effective_bs"] = args["batch_size"] * args['accumulate_grad_batches']
@@ -229,12 +229,12 @@ args["n_runs"] = 1
 if args["dataset"] in ["ChestMNIST", "RetinaMNIST", "BreastMNIST"]:
     args["do_medmnist"] = True
     args["ft_batch_size"] = 8192 if dist else 4096
-    args["max_epochs"] = 50
-    args["val_epoch"] = 5
+    # args["max_epochs"] = 50
+    # args["val_epoch"] = 5
     # mae_masking_ratio = 0.5
     # msn_masking_ratio = 0.15
     # patch_size = 2
-args["epochs_medmnist"] = 50
+args["epochs_medmnist"] = 100
 args["lr_medmnist"] = 0.1
 args["gamma_medmnist"] = 0.1
 args["milestones_medmnist"] = [
@@ -1508,7 +1508,6 @@ class MAEModel(BenchmarkModule):
             plt.xlabel('batch')
             plt.ylabel('loss')
             plt.title(f'Loss vs. Batches, epoch {self.current_epoch}')
-            plt.show()
 
             buf = io.BytesIO()
             plt.savefig(buf, format='png')
