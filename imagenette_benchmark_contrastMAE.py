@@ -131,7 +131,7 @@ class CustomTransform:
 
 
 # wandb offline
-os.environ['WANDB_MODE'] = 'offline'
+# os.environ['WANDB_MODE'] = 'offline'
 
 import wandb
 
