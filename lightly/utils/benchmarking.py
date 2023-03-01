@@ -154,7 +154,8 @@ def evaluate_model_linear_probing(
     # print(model)
 
     if args['flatten']:
-        model.head = nn.Sequential(nn.Flatten(start_dim=1), torch.nn.BatchNorm1d(args["model_dim"], affine=False, eps=1e-6),
+        model.head = nn.Sequential(nn.Flatten(start_dim=1),
+                                   torch.nn.BatchNorm1d(args["model_dim"], affine=False, eps=1e-6),
                                    linear_layer)
     else:
         model.head = nn.Sequential(torch.nn.BatchNorm1d(args["model_dim"], affine=False, eps=1e-6), linear_layer)
@@ -406,15 +407,17 @@ class BenchmarkModule(LightningModule):
             print(f"Current kNN accuracy: {acc * 100.0:.2f} %")
             # also perform linear probing
             # with torch.no_grad():
-        #TODO: fix hack
-        if self.args['do_probing'] and ((current_epoch-1) % self.args['val_epoch'] == 0 or current_epoch % self.args['val_epoch'] == 0):
-            torch.set_grad_enabled(True)
 
-            # if the model is MAEModel
-            if self._get_name() == 'MAEModel':
-                save_heads = copy.deepcopy(self.backbone.heads)
-                # self.backbone.heads = nn.Identity()
-                del self.backbone.heads
+        # if the model is MAEModel
+        if self._get_name() == 'MAEModel':
+            save_heads = copy.deepcopy(self.backbone.heads)
+            # self.backbone.heads = nn.Identity()
+            del self.backbone.heads
+
+        # TODO: fix hack
+        if self.args['do_probing'] and (
+                (current_epoch - 1) % self.args['val_epoch'] == 0 or current_epoch % self.args['val_epoch'] == 0):
+            torch.set_grad_enabled(True)
 
             max_accuracy, acc1, _, _ = evaluate_model_linear_probing(self.backbone, self.dataloader_train_ssl,
                                                                      self.dataloader_test, device, self.args,
@@ -423,9 +426,6 @@ class BenchmarkModule(LightningModule):
             self.log('linear_probing_accuracy1', acc1, prog_bar=True)
             print(f"Current linear probing accuracy1: {acc1:.2f} %")
             # remove model.head from the backbone
-            del self.backbone.head
-            if self._get_name() == 'MAEModel':
-                self.backbone.heads = save_heads
 
         if self.args['do_medmnist']:
             torch.set_grad_enabled(True)
@@ -443,9 +443,10 @@ class BenchmarkModule(LightningModule):
             linear_layer.weight.data.normal_(mean=0.0, std=0.01)
             linear_layer.bias.data.zero_()
 
-            self.backbone.head = nn.Sequential(nn.Flatten(start_dim=1),
-                                               torch.nn.BatchNorm1d(self.args["model_dim"], affine=False, eps=1e-6),
-                                               linear_layer)
+            # self.backbone.head = nn.Sequential(nn.Flatten(start_dim=1),
+            #                                    torch.nn.BatchNorm1d(self.args["model_dim"], affine=False, eps=1e-6),
+            #                                    linear_layer)
+            self.backbone.head = nn.Sequential(torch.nn.BatchNorm1d(self.args["model_dim"], affine=False, eps=1e-6), linear_layer)
 
             for _, p in self.backbone.named_parameters():
                 p.requires_grad = False
@@ -468,10 +469,11 @@ class BenchmarkModule(LightningModule):
             losses = []
             for epoch in range(self.args['epochs_medmnist']):
                 scheduler.step()
-                for batch_idx, (inputs, targets, _) in tqdm(enumerate(self.dataloader_train_ssl)):
+                for batch_idx, (inputs, targets, _) in tqdm(enumerate(self.dataloader_kNN)):
                     optimizer.zero_grad()
                     inputs = inputs.to(self.dummy_param.device)
-                    outputs = self.backbone(inputs).squeeze()
+                    outputs = self.backbone(inputs)
+                    outputs = self.backbone.head(outputs)
                     # outputs = F.normalize(outputs, dim=1)
 
                     if task == 'multi-label, binary-class':
@@ -538,13 +540,15 @@ class BenchmarkModule(LightningModule):
                 p.requires_grad = True
             torch.set_grad_enabled(False)
             del self.backbone.head
+            if self._get_name() == 'MAEModel':
+                self.backbone.heads = save_heads
 
-            # if the backbone is a vit model, we visualize the attention maps
-            if self.backbone.__class__.__name__ == 'VisionTransformer':
-                self.backbone.eval()
-                for batch_idx, (inputs, targets, _) in enumerate(self.dataloader_test):
-                    inputs = inputs.to(self.dummy_param.device)
-                    outputs = self.backbone(inputs)
-                    break
+            # # if the backbone is a vit model, we visualize the attention maps
+            # if self.backbone.__class__.__name__ == 'VisionTransformer':
+            #     self.backbone.eval()
+            #     for batch_idx, (inputs, targets, _) in enumerate(self.dataloader_test):
+            #         inputs = inputs.to(self.dummy_param.device)
+            #         outputs = self.backbone(inputs)
+            #         break
 
             self.backbone.train()
