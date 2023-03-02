@@ -95,6 +95,7 @@ parser.add_argument('--run_name', type=str, default='')
 
 run_name = parser.parse_args().run_name
 
+
 # try out inat pytorch dataloader
 #
 # from torchvision.datasets import INaturalist
@@ -182,7 +183,7 @@ args["patch_size"] = 16
 args["patch_size"] = int(args["patch_size"] * ratio)
 
 # vit settings
-args["vit_name"] = "vit_tiny"
+args["vit_name"] = "vqgan_vit_tiny"
 
 if args["vit_name"] == "vit_base":
     args["vit_dim"] = 768
@@ -208,9 +209,16 @@ elif args["vit_name"] == "vit_tiny":
     args["vit_decoder_dim"] = 128
     args["vit_decoder_layers"] = 1
     args["vit_decoder_heads"] = 2
+elif args["vit_name"] == "vqgan_vit_tiny":
+    args["vit_dim"] = 256
+    args["vit_depth"] = 4
+    args["vit_heads"] = 4
+    args["vit_mlp_dim"] = 4 * args["vit_dim"]
+    args["vit_decoder_dim"] = 128
+    args["vit_decoder_layers"] = 1
+    args["vit_decoder_heads"] = 2
 else:
     raise ValueError("Invalid vit name")
-
 
 gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
 if dist:
@@ -218,8 +226,8 @@ if dist:
     args['batch_size'] = args['batch_size'] * gpus
     args['ft_batch_size'] = args['ft_batch_size'] * gpus
 
-
 args["msn_masking_ratio"] = 0.15
+args["finetune"] = False
 args["do_probing"] = False
 args["do_kNN"] = True
 args["do_medmnist"] = False
@@ -324,7 +332,6 @@ inv_normalize = torchvision.transforms.Normalize(
     mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.255],
     std=[1 / 0.229, 1 / 0.224, 1 / 0.255],
 )
-
 
 local_patch_size = int(input_size * ratio)
 ratio2 = 256 / 224
@@ -1405,11 +1412,11 @@ class MAEModel(BenchmarkModule):
         )
         self.decoder = masked_autoencoder.MAEDecoder(
             seq_length=self.sequence_length,
-            num_layers=args["vit_decoder_layers"], #TODO: tryout vals here
+            num_layers=args["vit_decoder_layers"],  # TODO: tryout vals here
             num_heads=args["vit_decoder_heads"],
             embed_input_dim=args["vit_dim"],
-            hidden_dim=decoder_dim,
-            mlp_dim=decoder_dim * 4,
+            hidden_dim=args["vit_decoder_dim"],
+            mlp_dim=args["vit_decoder_dim"] * 4,
             out_dim=self.patch_size ** 2 * 1 if args['MAE_collate_type'] == 'canny' else self.patch_size ** 2 * 3,
             dropout=0,
             attention_dropout=0,
@@ -1492,7 +1499,8 @@ class MAEModel(BenchmarkModule):
                 # repeat the first channel 3 times
                 orginal_img_unpatched = orginal_img_unpatched.repeat(3, 1, 1)
 
-            concat_images = torch.cat((images[0], orginal_img_unpatched, test_target_img, reconstructed_img_unpatched), dim=2)
+            concat_images = torch.cat((images[0], orginal_img_unpatched, test_target_img, reconstructed_img_unpatched),
+                                      dim=2)
             # show_image(torch.cat((orginal_img_unpatched, test_target_img, reconstructed_img_unpatched), dim=2), 1, inv_normalize=inv_normalize, times_255=True)
 
             concat_images = concat_images.unsqueeze(0)
@@ -1525,7 +1533,6 @@ class MAEModel(BenchmarkModule):
             del reconstructed_img_unpatched
             del test_target_img
 
-
         return loss
 
     def configure_optimizers(self):
@@ -1549,36 +1556,40 @@ class vqganMAEModel(BenchmarkModule):
             dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
         )
 
-        decoder_dim = 512
+        decoder_dim = args["vit_decoder_dim"]
         vit = torchvision.models.vit_b_32(pretrained=False)
 
         self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
         # self.mask_ratio = 0.75
-        self.mask_ratio = 0.25
+        self.mask_ratio = 0.2
         # self.patch_size = vit.patch_size
         self.patch_size = 2
         # self.sequence_length = vit.seq_length
-        self.sequence_length = 16
+        # self.sequence_length = 16
+        self.sequence_length = 7 * 7 + 1  # TODO: rm hardcode
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
         # self.backbone = masked_autoencoder.MAEBackbone.from_vit(vit)
         self.backbone = masked_autoencoder.vqganMAEBackbone(
             image_size=8,  # TODO: rm hardcode
             patch_size=2,  # TODO: check patch sizes
-            num_layers=6,
-            num_heads=4,
-            hidden_dim=256,
-            mlp_dim=256 * 4,
+            num_layers=args["vit_depth"],
+            num_heads=args["vit_heads"],
+            hidden_dim=args["vit_dim"],
+            mlp_dim=args["vit_mlp_dim"],
         )
+
         self.decoder = masked_autoencoder.MAEDecoder(
             seq_length=self.sequence_length,
-            num_layers=1,
-            num_heads=16,
+            num_layers=args["vit_decoder_layers"],  # TODO: tryout vals here
+            num_heads=args["vit_decoder_heads"],
             # embed_input_dim=vit.hidden_dim,
-            embed_input_dim=256,
-            hidden_dim=decoder_dim,
-            mlp_dim=decoder_dim * 4,
+            embed_input_dim=args["vit_dim"],
+            hidden_dim=args["vit_decoder_dim"],
+            mlp_dim=args["vit_decoder_dim"] * 4,
             # out_dim=self.patch_size ** 2 * 3,
-            out_dim=self.patch_size ** 2 * 256,
+            # out_dim=self.patch_size ** 2 * 256,
+            # out_dim=self.patch_size ** 2 * args["vit_dim"],
+            out_dim=args["vit_dim"],
             dropout=0,
             attention_dropout=0,
         )
@@ -1639,6 +1650,18 @@ class vqganMAEModel(BenchmarkModule):
             codes = self.model.post_quant_conv(codes)
         return codes
 
+    def codes_to_images(self, codes):
+        images = []
+        for i in range(0, codes.shape[0], self.vqgan_batch_size):
+            images.append(self.vqganmodel.decode(codes[i: i + self.vqgan_batch_size]))
+        images = torch.cat(images, dim=0)
+        return images
+
+    def unpatchify_vqgan(self, codes):
+        codes = codes.reshape(codes.shape[0], 7, 7, 256)
+        codes = codes.permute(0, 3, 1, 2)
+        return codes
+
     def training_step(self, batch, batch_idx):
         # (im1, im2), _, _ = batch
         images, _, _ = batch
@@ -1655,12 +1678,94 @@ class vqganMAEModel(BenchmarkModule):
         x_pred = self.forward_decoder(x_encoded, idx_keep, idx_mask)
 
         # get image patches for masked tokens
-        patches = utils.patchify(images, self.patch_size)
-        # must adjust idx_mask for missing class token
+        # patches = utils.patchify(images, self.patch_size)
+        # target = utils.get_at_index(patches, idx_mask - 1)
+        # reshape, combining the last two dimensions of images
+        patches = images.reshape(images.shape[0], images.shape[1], -1)
+        # swap the first and second dimensions of images
+        patches = patches.permute(0, 2, 1)
+
         target = utils.get_at_index(patches, idx_mask - 1)
 
         loss = self.criterion(x_pred, target)
         self.log("train_loss_ssl", loss)
+
+        if batch_idx == 0:
+            # empty patch
+            im_id = 2
+            # target_img = utils.set_at_index(patches, idx_mask - 1, torch.zeros_like(patches))
+            target_img = utils.set_at_index(patches, idx_mask - 1, torch.zeros_like(patches[:, :idx_mask.shape[1], :]))
+            reconstructed_img = utils.set_at_index(target_img, idx_mask - 1, x_pred)
+
+            test_target_img = self.unpatchify_vqgan(target_img)
+            test_target_img = self.codes_to_images(test_target_img)[im_id]
+
+            reconstructed_img_unpatched = self.unpatchify_vqgan(reconstructed_img)
+            reconstructed_img_unpatched = self.codes_to_images(reconstructed_img_unpatched)[im_id]
+
+            orginal_img_unpatched = self.codes_to_images(images)[im_id]
+
+            # test = utils.unpatchify(x=patches, patch_size=self.patch_size)
+            # test2 = utils.unpatchify(x=x_pred, patch_size=self.patch_size)
+            # test_target_img = utils.unpatchify(x=target_img, patch_size=self.patch_size)[0]
+            # reconstructed_img_unpatched = utils.unpatchify(x=reconstructed_img, patch_size=self.patch_size)[0]
+            # orginal_img_unpatched = utils.unpatchify(x=patches, patch_size=self.patch_size)[0]
+            # test_target_img = images[0]
+
+            # show_image(test_target_img, 1, inv_normalize=inv_normalize, times_255=True)
+            # show_image(reconstructed_img_unpatched, 1, inv_normalize=inv_normalize, times_255=True)
+            # show_image(orginal_img_unpatched, 1, inv_normalize=inv_normalize, times_255=True)
+
+            # orginial, target, reconstructed next to each other
+
+            test_orig_image = self.codes_to_images(images)
+            # plot image
+
+            if test_target_img.shape[0] == 1:
+                # repeat the first channel 3 times
+                test_target_img = test_target_img.repeat(3, 1, 1)
+            if reconstructed_img_unpatched.shape[0] == 1:
+                # repeat the first channel 3 times
+                reconstructed_img_unpatched = reconstructed_img_unpatched.repeat(3, 1, 1)
+            if orginal_img_unpatched.shape[0] == 1:
+                # repeat the first channel 3 times
+                orginal_img_unpatched = orginal_img_unpatched.repeat(3, 1, 1)
+
+            concat_images = torch.cat(
+                (batch[0][im_id], orginal_img_unpatched, test_target_img, reconstructed_img_unpatched), dim=2)
+            # show_image(torch.cat((orginal_img_unpatched, test_target_img, reconstructed_img_unpatched), dim=2), 1, inv_normalize=inv_normalize, times_255=True)
+
+            concat_images = concat_images.unsqueeze(0)
+            concat_images = inv_normalize(concat_images)
+            concat_images = concat_images.permute(0, 2, 3, 1)
+            concat_images = concat_images.detach().cpu().numpy()
+            concat_images = concat_images * 255
+            concat_images = concat_images.astype(np.uint8)
+            concat_images = concat_images[0]
+
+            plt.figure()
+            plt.imshow(concat_images)
+            plt.xlabel('batch')
+            plt.ylabel('loss')
+            plt.title(f'Loss vs. Batches, epoch {self.current_epoch}')
+            # plt.show()
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            image = Image.open(buf)
+
+            self.logger.log_image(key='reconstruction',
+                                  images=[image]
+                                  )
+
+            del buf
+            del image
+            del concat_images
+            del orginal_img_unpatched
+            del reconstructed_img_unpatched
+            del test_target_img
+
         return loss
 
     def configure_optimizers(self):
