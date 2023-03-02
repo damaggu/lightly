@@ -514,6 +514,7 @@ class BenchmarkModule(LightningModule):
                 for batch_idx, (inputs, targets, _) in enumerate(self.dataloader_test):
                     inputs = inputs.to(self.dummy_param.device)
                     outputs = self.backbone(inputs).squeeze()
+                    outputs = self.backbone.head(outputs)
                     # outputs = F.normalize(outputs, dim=1)
 
                     if task == 'multi-label, binary-class':
