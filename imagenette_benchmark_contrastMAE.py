@@ -169,8 +169,8 @@ else:
     if input_size == 224:
         args["batch_size"] = 128 if dist else 128
     else:
-        args["batch_size"] = 4096 if dist else 128
-args['MAE_collate_type'] = 'normal'
+        args["batch_size"] = 4096 if dist else 16
+args['MAE_collate_type'] = 'sobelplus'
 args['MAE_baseLR'] = 1.5e-4
 args['accumulate_grad_batches'] = 8
 args["effective_bs"] = args["batch_size"] * args['accumulate_grad_batches']
@@ -537,7 +537,7 @@ def get_data_loaders(
     """Helper method to create dataloaders for ssl, kNN train and kNN test
 
     Args:
-        batch_size: Desired batch size for all dataloaders
+        batch_size: Desired batch size for all fdataloaders
     """
     col_fn = collate_fn
     if model == SwaVModel:
@@ -1470,6 +1470,200 @@ class MAEModel(BenchmarkModule):
         # target_img = utils.set_at_index(patches, idx_mask - 1, x_pred)
 
         loss = self.criterion(x_pred, target)
+        self.log("train_loss_ssl", loss)
+        if batch_idx == 0:
+            # empty patch
+            # target_img = utils.set_at_index(patches, idx_mask - 1, torch.zeros_like(patches))
+            target_img = utils.set_at_index(patches, idx_mask - 1, torch.zeros_like(patches[:, :idx_mask.shape[1], :]))
+            reconstructed_img = utils.set_at_index(target_img, idx_mask - 1, x_pred)
+
+            # test = utils.unpatchify(x=patches, patch_size=self.patch_size)
+            # test2 = utils.unpatchify(x=x_pred, patch_size=self.patch_size)
+            test_target_img = utils.unpatchify(x=target_img, patch_size=self.patch_size)[0]
+            reconstructed_img_unpatched = utils.unpatchify(x=reconstructed_img, patch_size=self.patch_size)[0]
+            orginal_img_unpatched = utils.unpatchify(x=patches, patch_size=self.patch_size)[0]
+
+            # show_image(test_target_img, 1, inv_normalize=inv_normalize, times_255=True)
+            # show_image(reconstructed_img_unpatched, 1, inv_normalize=inv_normalize, times_255=True)
+            # show_image(orginal_img_unpatched, 1, inv_normalize=inv_normalize, times_255=True)
+
+            # orginial, target, reconstructed next to each other
+
+            if test_target_img.shape[0] == 1:
+                # repeat the first channel 3 times
+                test_target_img = test_target_img.repeat(3, 1, 1)
+            if reconstructed_img_unpatched.shape[0] == 1:
+                # repeat the first channel 3 times
+                reconstructed_img_unpatched = reconstructed_img_unpatched.repeat(3, 1, 1)
+            if orginal_img_unpatched.shape[0] == 1:
+                # repeat the first channel 3 times
+                orginal_img_unpatched = orginal_img_unpatched.repeat(3, 1, 1)
+
+            concat_images = torch.cat((images[0], orginal_img_unpatched, test_target_img, reconstructed_img_unpatched),
+                                      dim=2)
+            # show_image(torch.cat((orginal_img_unpatched, test_target_img, reconstructed_img_unpatched), dim=2), 1, inv_normalize=inv_normalize, times_255=True)
+
+            concat_images = concat_images.unsqueeze(0)
+            concat_images = inv_normalize(concat_images)
+            concat_images = concat_images.permute(0, 2, 3, 1)
+            concat_images = concat_images.detach().cpu().numpy()
+            concat_images = concat_images * 255
+            concat_images = concat_images.astype(np.uint8)
+            concat_images = concat_images[0]
+
+            plt.figure()
+            plt.imshow(concat_images)
+            plt.xlabel('batch')
+            plt.ylabel('loss')
+            plt.title(f'Loss vs. Batches, epoch {self.current_epoch}')
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            image = Image.open(buf)
+
+            self.logger.log_image(key='reconstruction',
+                                  images=[image]
+                                  )
+
+            del buf
+            del image
+            del concat_images
+            del orginal_img_unpatched
+            del reconstructed_img_unpatched
+            del test_target_img
+
+        return loss
+
+    def configure_optimizers(self):
+        optim = torch.optim.AdamW(
+            self.parameters(),
+            lr=args['MAE_baseLR'] * lr_factor,
+            weight_decay=0.05,
+            betas=(0.9, 0.95),
+        )
+        cosine_scheduler = scheduler.CosineWarmupScheduler(
+            optim, self.warmup_epochs, args["max_epochs"]
+        )
+        return [optim], [cosine_scheduler]
+
+class sobelMAEModel(BenchmarkModule):
+    def __init__(
+            self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+    ):
+        super().__init__(
+            dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
+        )
+
+        decoder_dim = args["vit_decoder_dim"]
+        # vit = torchvision.models.vit_b_32(pretrained=False)
+
+        self.warmup_epochs = 40 if args["max_epochs"] >= 800 else 20
+        self.mask_ratio = args["mae_masking_ratio"]
+        self.patch_size = args["patch_size"]
+        self.sequence_length = (args["input_size"] // self.patch_size) ** 2 + 1
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
+        # self.backbone = masked_autoencoder.MAEBackbone.from_vit(vit)
+        self.backbone = masked_autoencoder.MAEBackbone(
+            image_size=input_size,
+            patch_size=self.patch_size,
+            num_layers=args["vit_depth"],
+            num_heads=args["vit_heads"],
+            hidden_dim=args["vit_dim"],
+            mlp_dim=args["vit_mlp_dim"],
+        )
+        self.decoder = masked_autoencoder.MAEDecoder(
+            seq_length=self.sequence_length,
+            num_layers=args["vit_decoder_layers"],  # TODO: tryout vals here
+            num_heads=args["vit_decoder_heads"],
+            embed_input_dim=args["vit_dim"],
+            hidden_dim=args["vit_decoder_dim"],
+            mlp_dim=args["vit_decoder_dim"] * 4,
+            out_dim=self.patch_size ** 2 * 1 if args['MAE_collate_type'] == 'canny' else self.patch_size ** 2 * 3,
+            dropout=0,
+            attention_dropout=0,
+        )
+        self.sobel_decoder = masked_autoencoder.MAEDecoder(
+            seq_length=self.sequence_length,
+            num_layers=args["vit_decoder_layers"],  # TODO: tryout vals here
+            num_heads=args["vit_decoder_heads"],
+            embed_input_dim=args["vit_dim"],
+            hidden_dim=args["vit_decoder_dim"],
+            mlp_dim=args["vit_decoder_dim"] * 4,
+            out_dim=self.patch_size ** 2 * 1 if args['MAE_collate_type'] == 'canny' else self.patch_size ** 2 * 3,
+            dropout=0,
+            attention_dropout=0,
+        )
+        self.criterion = nn.MSELoss()
+
+    def forward_encoder(self, images, idx_keep=None):
+        return self.backbone.encode(images, idx_keep)
+
+    def forward_decoder(self, x_encoded, idx_keep, idx_mask):
+        # build decoder input
+        batch_size = x_encoded.shape[0]
+        x_decode = self.decoder.embed(x_encoded)
+        x_masked = utils.repeat_token(
+            self.mask_token, (batch_size, self.sequence_length)
+        )
+        x_masked = utils.set_at_index(x_masked, idx_keep, x_decode)
+
+        # decoder forward pass
+        x_decoded = self.decoder.decode(x_masked)
+
+        # predict pixel values for masked tokens
+        x_pred = utils.get_at_index(x_decoded, idx_mask)
+        x_pred = self.decoder.predict(x_pred)
+        return x_pred
+
+    def forward_decoder_sobel(self, x_encoded, idx_keep, idx_mask):
+        # build decoder input
+        batch_size = x_encoded.shape[0]
+        x_decode = self.sobel_decoder.embed(x_encoded)
+        x_masked = utils.repeat_token(
+            self.mask_token, (batch_size, self.sequence_length)
+        )
+        x_masked = utils.set_at_index(x_masked, idx_keep, x_decode)
+
+        # decoder forward pass
+        x_decoded = self.sobel_decoder.decode(x_masked)
+
+        # predict pixel values for masked tokens
+        x_pred = utils.get_at_index(x_decoded, idx_mask)
+        x_pred = self.sobel_decoder.predict(x_pred)
+        return x_pred
+
+
+    def training_step(self, batch, batch_idx):
+        targets = None
+        try:
+            (images, targets), _, _ = batch
+        except:
+            images, _, _ = batch
+
+        batch_size = images.shape[0]
+        idx_keep, idx_mask = utils.random_token_mask(
+            size=(batch_size, self.sequence_length),
+            mask_ratio=self.mask_ratio,
+            device=images.device,
+        )
+        x_encoded = self.forward_encoder(images, idx_keep)
+        x_pred = self.forward_decoder(x_encoded, idx_keep, idx_mask)
+        x_pred_sobel = self.forward_decoder_sobel(x_encoded, idx_keep, idx_mask)
+
+        # get image patches for masked tokens
+        if targets is None:
+            patches = utils.patchify(images, self.patch_size)
+        else:
+            patches = utils.patchify(targets, self.patch_size)
+        # must adjust idx_mask for missing class token
+        target = utils.get_at_index(patches, idx_mask - 1)
+
+        # target_img = utils.set_at_index(patches, idx_mask - 1, x_pred)
+
+        loss = self.criterion(x_pred, target)
+        loss_sobel = self.criterion(x_pred_sobel, target)
+        loss = loss + loss_sobel
         self.log("train_loss_ssl", loss)
         if batch_idx == 0:
             # empty patch
@@ -2675,14 +2869,14 @@ models = [
     # SLIPModel,
     # vqganMAEModel,
     # SequentialSLIPModel,
-
+    sobelMAEModel,
     # SimMIMModel,
 
     # SimSiamModel,
     # SwaVModel,
     # DINOModel,
     # BYOLModel, # bs 256; ft 128
-    MAEModel,  # bs 256; ft 64
+    # MAEModel,  # bs 256; ft 64
     # MSNModel,
     # SimCLRModel,
     # TiCoModel,
@@ -2696,77 +2890,144 @@ contrastive_types = [
     "simclr",
 ]
 
-idx = 0
-experiment_version = None
-# loop through configurations and train models
-for BenchmarkModel in models:
-    model_name = BenchmarkModel.__name__.replace("Model", "")
-    for contrastive_type in contrastive_types:
-        if not "contrast" in model_name and contrastive_type in ["moco", "simclr"]:
-            continue
-        runs = []
+if __name__ == "__main__":
 
-        if model_name == 'MAE' or model_name == 'MSN' or model_name == 'SimMIM':
-            # args update model dim
-            args.update({"model_dim": args["vit_dim"]})
-            args.update({"flatten": False})
+    idx = 0
+    experiment_version = None
+    # loop through configurations and train models
+    for BenchmarkModel in models:
+        model_name = BenchmarkModel.__name__.replace("Model", "")
+        for contrastive_type in contrastive_types:
+            if not "contrast" in model_name and contrastive_type in ["moco", "simclr"]:
+                continue
+            runs = []
 
-        # if model_name == 'SimCLR':
-        #     # args update model dim
-        #     args.update({"model_dim": 1024})
+            if model_name == 'MAE' or model_name == 'MSN' or model_name == 'SimMIM':
+                # args update model dim
+                args.update({"model_dim": args["vit_dim"]})
+                args.update({"flatten": False})
 
-        if "contrast" in model_name:
-            model_name = model_name + contrastive_type
-        for seed in range(args["n_runs"]):
-            if "MSN" in model_name:
-                wandb_logger = WandbLogger(
-                    project=project_name,
-                    entity="maggu",
-                    name=f"{model_name}--_{msn_aug_mode}_224_{args['msn_masking_ratio']}_training--{seed}",
-                    log_model=log_model,
-                )
-            else:
-                wandb_logger = WandbLogger(
-                    project=project_name,
-                    entity="maggu",
-                    name=f"{model_name}--training--{seed}" + run_name,
-                    log_model=log_model,
-                )
-            # get every key val of args
-            wandb_logger.log_hyperparams(args)
+            # if model_name == 'SimCLR':
+            #     # args update model dim
+            #     args.update({"model_dim": 1024})
 
-            pl.seed_everything(seed)
-
-            (
-                dataloader_train_ssl,
-                dataloader_train_probing,
-                dataloader_train_kNN,
-                dataloader_test,
-            ) = get_data_loaders(
-                batch_size_train_ssl=args["batch_size"],
-                batch_size_train_kNN=args["ft_batch_size"],
-                batch_size_train_probing=args["ft_batch_size"],
-                batch_size_test=args["ft_batch_size"],
-                model=BenchmarkModel,
-            )
             if "contrast" in model_name:
-                benchmark_model = BenchmarkModel(
-                    dataloader_train_kNN,
-                    dataloader_train_probing,
-                    dataloader_test,
-                    args=args,
-                    num_classes=classes,
-                    contrastive_type=contrastive_type,
-                )
-            elif 'Sequential' in model_name:
+                model_name = model_name + contrastive_type
+            for seed in range(args["n_runs"]):
+                if "MSN" in model_name:
+                    wandb_logger = WandbLogger(
+                        project=project_name,
+                        entity="maggu",
+                        name=f"{model_name}--_{msn_aug_mode}_224_{args['msn_masking_ratio']}_training--{seed}",
+                        log_model=log_model,
+                    )
+                else:
+                    wandb_logger = WandbLogger(
+                        project=project_name,
+                        entity="maggu",
+                        name=f"{model_name}--training--{seed}" + run_name,
+                        log_model=log_model,
+                    )
+                # get every key val of args
+                wandb_logger.log_hyperparams(args)
 
-                simclr_model = SimCLRModel(
-                    dataloader_train_kNN,
+                pl.seed_everything(seed)
+
+                (
+                    dataloader_train_ssl,
                     dataloader_train_probing,
+                    dataloader_train_kNN,
                     dataloader_test,
-                    args=args,
-                    num_classes=classes,
+                ) = get_data_loaders(
+                    batch_size_train_ssl=args["batch_size"],
+                    batch_size_train_kNN=args["ft_batch_size"],
+                    batch_size_train_probing=args["ft_batch_size"],
+                    batch_size_test=args["ft_batch_size"],
+                    model=BenchmarkModel,
                 )
+                if "contrast" in model_name:
+                    benchmark_model = BenchmarkModel(
+                        dataloader_train_kNN,
+                        dataloader_train_probing,
+                        dataloader_test,
+                        args=args,
+                        num_classes=classes,
+                        contrastive_type=contrastive_type,
+                    )
+                elif 'Sequential' in model_name:
+
+                    simclr_model = SimCLRModel(
+                        dataloader_train_kNN,
+                        dataloader_train_probing,
+                        dataloader_test,
+                        args=args,
+                        num_classes=classes,
+                    )
+                    trainer = pl.Trainer(
+                        max_epochs=args["max_epochs"],
+                        gpus=gpus,
+                        default_root_dir=logs_root_dir,
+                        strategy=distributed_backend,
+                        sync_batchnorm=sync_batchnorm,
+                        logger=wandb_logger,
+                        check_val_every_n_epoch=args["val_epoch"],
+                        # accelerator="cpu",
+                        # num_processes=0,
+                        # callbacks=[checkpoint_callback]
+                    )
+                    start = time.time()
+                    trainer.fit(
+                        simclr_model,
+                        train_dataloaders=dataloader_train_ssl,
+                        val_dataloaders=dataloader_test,
+                    )
+
+                    benchmark_model = BenchmarkModel(
+                        dataloader_train_kNN,
+                        dataloader_train_probing,
+                        dataloader_test,
+                        args=args,
+                        num_classes=classes,
+                    )
+                    benchmark_model.set_backbone(simclr_model.backbone)
+                    print("done")
+
+                else:
+                    benchmark_model = BenchmarkModel(
+                        dataloader_train_kNN,
+                        dataloader_train_probing,
+                        dataloader_test,
+                        args=args,
+                        num_classes=classes,
+                    )
+
+                # Save logs to: {CWD}/benchmark_logs/cifar10/{experiment_version}/{model_name}/
+                # If multiple runs are specified a subdirectory for each run is created.
+                sub_dir = model_name if args["n_runs"] <= 1 else f"{model_name}/run{seed}"
+                # logger = TensorBoardLogger(
+                #     save_dir=os.path.join(logs_root_dir, args["dataset"] ),
+                #     name='',
+                #     sub_dir=sub_dir,
+                #     version=experiment_version,
+                # )
+                # if experiment_version is None:
+                #     # Save results of all models under same version directory
+                #     experiment_version = logger.version
+                log_path = os.path.join(wandb_logger.experiment.dir, 'checkpoints')
+                checkpoint_callback = pl.callbacks.ModelCheckpoint(
+                    dirpath=log_path
+                )
+
+                wandb_logger.watch(benchmark_model, log_graph=False, log="all", log_freq=1)
+
+                # trainer = pl.Trainer(
+                #     args["max_epochs"]=args["max_epochs"],
+                #     accelerator="cpu",
+                #     default_root_dir=logs_root_dir,
+                #     strategy="dp",
+                #     num_processes=0,
+                # )
+
                 trainer = pl.Trainer(
                     max_epochs=args["max_epochs"],
                     gpus=gpus,
@@ -2775,158 +3036,96 @@ for BenchmarkModel in models:
                     sync_batchnorm=sync_batchnorm,
                     logger=wandb_logger,
                     check_val_every_n_epoch=args["val_epoch"],
+                    limit_train_batches=1 if test else None,
+                    limit_val_batches=1 if test else None,
+                    accumulate_grad_batches=args["accumulate_grad_batches"],
+                    callbacks=[checkpoint_callback],
                     # accelerator="cpu",
                     # num_processes=0,
-                    # callbacks=[checkpoint_callback]
                 )
                 start = time.time()
                 trainer.fit(
-                    simclr_model,
+                    benchmark_model,
                     train_dataloaders=dataloader_train_ssl,
                     val_dataloaders=dataloader_test,
                 )
 
-                benchmark_model = BenchmarkModel(
-                    dataloader_train_kNN,
-                    dataloader_train_probing,
-                    dataloader_test,
-                    args=args,
-                    num_classes=classes,
-                )
-                benchmark_model.set_backbone(simclr_model.backbone)
-                print("done")
+                end = time.time()
+                run = {
+                    "model": model_name,
+                    "batch_size": args["batch_size"],
+                    "epochs": args["max_epochs"],
+                    "max_accuracy": benchmark_model.max_accuracy,
+                    "runtime": end - start,
+                    "gpu_memory_usage": torch.cuda.max_memory_allocated(),
+                    "seed": seed,
+                }
+                runs.append(run)
+                print(run)
 
+                # delete model and trainer + free up cuda memory
+                del benchmark_model
+                del trainer
+                torch.cuda.reset_peak_memory_stats()
+                torch.cuda.empty_cache()
+
+                wandb_logger.experiment.finish()
+                # del wandb_logger
+
+            bench_results[model_name] = runs
+
+    if False:
+        #  print results table
+        header = (
+            f"| {'Model':<13} | {'Batch Size':>10} | {'Epochs':>6} "
+            f"| {'KNN Test Accuracy':>18} | {'Time':>10} | {'Peak GPU Usage':>14} |"
+        )
+        print("-" * len(header))
+        print(header)
+        print("-" * len(header))
+        idx = 0
+        for model, results in bench_results.items():
+            wandb.init(
+                project=project_name,
+                entity="maggu",
+                # settings=wandb.Settings(start_method="thread"),
+                save_code=False,
+                name=f"{model}--results",
+            )
+
+            idx += 1
+            if idx == 5:
+                break
+            runtime = np.array([result["runtime"] for result in results])
+            runtime = runtime.mean() / 60  # convert to min
+            accuracy = np.array([result["max_accuracy"] for result in results])
+            gpu_memory_usage = np.array([result["gpu_memory_usage"] for result in results])
+            gpu_memory_usage = gpu_memory_usage.max() / (1024 ** 3)  #  convert to gbyte
+
+            if len(accuracy) > 1:
+                accuracy_msg = f"{accuracy.mean():>8.3f} +- {accuracy.std():>4.3f}"
             else:
-                benchmark_model = BenchmarkModel(
-                    dataloader_train_kNN,
-                    dataloader_train_probing,
-                    dataloader_test,
-                    args=args,
-                    num_classes=classes,
-                )
+                accuracy_msg = f"{accuracy.mean():>18.3f}"
 
-            # Save logs to: {CWD}/benchmark_logs/cifar10/{experiment_version}/{model_name}/
-            # If multiple runs are specified a subdirectory for each run is created.
-            sub_dir = model_name if args["n_runs"] <= 1 else f"{model_name}/run{seed}"
-            # logger = TensorBoardLogger(
-            #     save_dir=os.path.join(logs_root_dir, args["dataset"] ),
-            #     name='',
-            #     sub_dir=sub_dir,
-            #     version=experiment_version,
-            # )
-            # if experiment_version is None:
-            #     # Save results of all models under same version directory
-            #     experiment_version = logger.version
-            log_path = os.path.join(wandb_logger.experiment.dir, 'checkpoints')
-            checkpoint_callback = pl.callbacks.ModelCheckpoint(
-                dirpath=log_path
+            print(
+                f"| {model:<13} | {batch_size:>10} | {max_epochs:>6} "
+                f"| {accuracy_msg} | {runtime:>6.1f} Min "
+                f"| {gpu_memory_usage:>8.1f} GByte |",
+                flush=True,
             )
 
-            wandb_logger.watch(benchmark_model, log_graph=False, log="all", log_freq=1)
-
-            # trainer = pl.Trainer(
-            #     args["max_epochs"]=args["max_epochs"],
-            #     accelerator="cpu",
-            #     default_root_dir=logs_root_dir,
-            #     strategy="dp",
-            #     num_processes=0,
-            # )
-            trainer = pl.Trainer(
-                max_epochs=args["max_epochs"],
-                gpus=gpus,
-                default_root_dir=logs_root_dir,
-                strategy=distributed_backend,
-                sync_batchnorm=sync_batchnorm,
-                logger=wandb_logger,
-                check_val_every_n_epoch=args["val_epoch"],
-                limit_train_batches=1 if test else None,
-                limit_val_batches=1 if test else None,
-                accumulate_grad_batches=args["accumulate_grad_batches"],
-                callbacks=[checkpoint_callback],
-                # accelerator="cpu",
-                # num_processes=0,
+            wandb.log(
+                {
+                    "model": model,
+                    "batch_size": batch_size,
+                    "epochs": max_epochs,
+                    "max_accuracy": accuracy.mean(),
+                    "runtime": runtime,
+                    "gpu_memory_usage": gpu_memory_usage,
+                }
             )
-            start = time.time()
-            trainer.fit(
-                benchmark_model,
-                train_dataloaders=dataloader_train_ssl,
-                val_dataloaders=dataloader_test,
-            )
+            wandb.finish()
+            time.sleep(6)
+        print("-" * len(header))
 
-            end = time.time()
-            run = {
-                "model": model_name,
-                "batch_size": args["batch_size"],
-                "epochs": args["max_epochs"],
-                "max_accuracy": benchmark_model.max_accuracy,
-                "runtime": end - start,
-                "gpu_memory_usage": torch.cuda.max_memory_allocated(),
-                "seed": seed,
-            }
-            runs.append(run)
-            print(run)
-
-            # delete model and trainer + free up cuda memory
-            del benchmark_model
-            del trainer
-            torch.cuda.reset_peak_memory_stats()
-            torch.cuda.empty_cache()
-
-            wandb_logger.experiment.finish()
-            # del wandb_logger
-
-        bench_results[model_name] = runs
-
-if False:
-    #  print results table
-    header = (
-        f"| {'Model':<13} | {'Batch Size':>10} | {'Epochs':>6} "
-        f"| {'KNN Test Accuracy':>18} | {'Time':>10} | {'Peak GPU Usage':>14} |"
-    )
-    print("-" * len(header))
-    print(header)
-    print("-" * len(header))
-    idx = 0
-    for model, results in bench_results.items():
-        wandb.init(
-            project=project_name,
-            entity="maggu",
-            # settings=wandb.Settings(start_method="thread"),
-            save_code=False,
-            name=f"{model}--results",
-        )
-
-        idx += 1
-        if idx == 5:
-            break
-        runtime = np.array([result["runtime"] for result in results])
-        runtime = runtime.mean() / 60  # convert to min
-        accuracy = np.array([result["max_accuracy"] for result in results])
-        gpu_memory_usage = np.array([result["gpu_memory_usage"] for result in results])
-        gpu_memory_usage = gpu_memory_usage.max() / (1024 ** 3)  #  convert to gbyte
-
-        if len(accuracy) > 1:
-            accuracy_msg = f"{accuracy.mean():>8.3f} +- {accuracy.std():>4.3f}"
-        else:
-            accuracy_msg = f"{accuracy.mean():>18.3f}"
-
-        print(
-            f"| {model:<13} | {batch_size:>10} | {max_epochs:>6} "
-            f"| {accuracy_msg} | {runtime:>6.1f} Min "
-            f"| {gpu_memory_usage:>8.1f} GByte |",
-            flush=True,
-        )
-
-        wandb.log(
-            {
-                "model": model,
-                "batch_size": batch_size,
-                "epochs": max_epochs,
-                "max_accuracy": accuracy.mean(),
-                "runtime": runtime,
-                "gpu_memory_usage": gpu_memory_usage,
-            }
-        )
-        wandb.finish()
-        time.sleep(6)
-    print("-" * len(header))
+main()
