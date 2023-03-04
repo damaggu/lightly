@@ -13,12 +13,17 @@ import torch.nn.functional as F
 from PIL import Image
 from matplotlib import pyplot as plt
 from pytorch_lightning import LightningModule
+from timm.data import Mixup
+from timm.loss import SoftTargetCrossEntropy, LabelSmoothingCrossEntropy
+from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from fb_MAE.engine_finetune import train_one_epoch, evaluate
 from pl_bolts.optimizers.lars import LARS
 from torch._six import inf
+
+from fb_MAE.util.lr_decay import param_groups_lrd
 
 
 # code for kNN prediction from here:
@@ -145,27 +150,33 @@ def evaluate_model_linear_probing(
         train_transform=None,
         val_transform=None,
         addition_model=None,
+        linear_probing=True,
 ):
-    linear_layer = nn.Linear(args["model_dim"], args["num_classes"], bias=True)
-    linear_layer.weight.data.normal_(mean=0.0, std=0.01)
-    linear_layer.bias.data.zero_()
+    if linear_probing:
+        linear_layer = nn.Linear(args["model_dim"], args["num_classes"], bias=True)
+        linear_layer.weight.data.normal_(mean=0.0, std=0.01)
+        linear_layer.bias.data.zero_()
 
-    # get model name
-    # print(model)
+        # get model name
+        # print(model)
 
-    if args['flatten']:
-        model.head = nn.Sequential(nn.Flatten(start_dim=1),
-                                   torch.nn.BatchNorm1d(args["model_dim"], affine=False, eps=1e-6),
-                                   linear_layer)
+        if args['flatten']:
+            model.head = nn.Sequential(nn.Flatten(start_dim=1),
+                                       torch.nn.BatchNorm1d(args["model_dim"], affine=False, eps=1e-6),
+                                       linear_layer)
+        else:
+            model.head = nn.Sequential(torch.nn.BatchNorm1d(args["model_dim"], affine=False, eps=1e-6), linear_layer)
+            # model.head = linear_layer
+
+        for _, p in model.named_parameters():
+            p.requires_grad = False
+        for _, p in model.head.named_parameters():
+            p.requires_grad = True
     else:
-        model.head = nn.Sequential(torch.nn.BatchNorm1d(args["model_dim"], affine=False, eps=1e-6), linear_layer)
-        # model.head = linear_layer
 
-    for _, p in model.named_parameters():
-        p.requires_grad = False
-    for _, p in model.head.named_parameters():
-        p.requires_grad = True
-
+        from timm.models.layers import trunc_normal_
+        model.heads.head = nn.Linear(args["model_dim"], args["num_classes"], bias=True)
+        trunc_normal_(model.heads.head.weight, std=2e-5)
     model.to(device)
 
     model_without_ddp = model
@@ -192,17 +203,72 @@ def evaluate_model_linear_probing(
     #     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=list(range(torch.cuda.device_count())))
     #     model_without_ddp = model.module
 
-    optimizer = LARS(
-        model.head.parameters(),
-        lr=args['lr'],
-        weight_decay=args['weight_decay'],
-        # momentum=0.9,
-    )
+    mixup = None
+    cutmix = None
+    cutmix_minmax = None
+    label_smoothing = None
+
+    if linear_probing:
+        optimizer = LARS(
+            model.head.parameters(),
+            lr=args['lr'],
+            weight_decay=args['weight_decay'],
+            # momentum=0.9,
+        )
+    else:
+        if args['model_name'] == "MAE":
+            model.dropout = 0.1
+
+        if args['load_pretrained']:
+            optimizer = AdamW(
+                model.parameters(),
+                lr=args["ft_lr_factor"] * 0.001,
+                weight_decay=0.05,
+                betas=(0.9, 0.999),
+                eps=1e-6,
+            )
+            cutmix = 1.0
+            cutmix_minmax = None
+            mixup = 0.8
+            label_smoothing = 0.1
+        else:
+            param_groups = param_groups_lrd(model, 0.3,
+                                            # no_weight_decay_list=model.no_weight_decay(),
+                                            layer_decay=0.75
+                                            )
+            optimizer = AdamW(
+                model.parameters(),
+                # param_groups,
+                lr=args["ft_lr_factor"] * 0.001,
+                weight_decay=0.3,
+                betas=(0.9, 0.999),
+                eps=1e-6,
+            )
+            cutmix = 1.0
+            cutmix_minmax = None
+            mixup = 0.8
+            label_smoothing = 0.1
+
+
+    mixup_fn = None
+    mixup_active = mixup > 0 or cutmix > 0. or cutmix_minmax is not None
+    if mixup_active:
+        print("Mixup is activated!")
+        mixup_fn = Mixup(
+            mixup_alpha=mixup, cutmix_alpha=cutmix, cutmix_minmax=cutmix_minmax,
+            prob=1.0, switch_prob=0.5, mode='batch',
+            label_smoothing=label_smoothing, num_classes=args['num_classes'])
 
     print(optimizer)
     loss_scaler = NativeScalerWithGradNormCount()
 
-    criterion = torch.nn.CrossEntropyLoss()
+    if mixup_fn is not None:
+        # smoothing is handled with mixup label transform
+        criterion = SoftTargetCrossEntropy()
+    elif args.smoothing > 0.:
+        criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
+    else:
+        criterion = torch.nn.CrossEntropyLoss()
 
     print("criterion = %s" % str(criterion))
 
@@ -230,7 +296,7 @@ def evaluate_model_linear_probing(
             loss_scaler,
             args["clip_grad"],
             transform=train_transform,
-            # mixup_fn,
+            mixup_fn=mixup_fn,
             # log_writer=log_writer,
             args=args,
             addition_model=addition_model,
@@ -562,3 +628,10 @@ class BenchmarkModule(LightningModule):
             #         break
 
             self.backbone.train()
+
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self(x)
+        loss = self.loss(y_hat, y)
+        self.log('test_loss', loss)
+        return loss
