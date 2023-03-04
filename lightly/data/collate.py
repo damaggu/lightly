@@ -734,6 +734,7 @@ class MAECollateFunction(MultiViewCollateFunction):
         # Return only first view as MAE needs only a single view per image.
         return views[0], labels, fnames
 
+
 class FourierCollateFunction(MultiViewCollateFunction):
     """Implements the view augmentation for an image, returning the image and its Fourier transforms for different
     frequencies as views.
@@ -771,9 +772,12 @@ class FourierCollateFunction(MultiViewCollateFunction):
             if normalize:
                 transforms.append(T.Normalize(mean=normalize["mean"], std=normalize["std"]))
         else:
+            ratio2 = 256 / 224
+            resize_size = int(input_size * ratio2)
+
             transforms = [
-                torchvision.transforms.Resize(256),
-                torchvision.transforms.CenterCrop(224),
+                torchvision.transforms.Resize(resize_size),
+                torchvision.transforms.CenterCrop(input_size),
                 torchvision.transforms.ToTensor(),
                 T.Normalize(mean=normalize["mean"], std=normalize["std"]),
             ]
@@ -782,6 +786,9 @@ class FourierCollateFunction(MultiViewCollateFunction):
 
     def forward(self, batch: List[tuple]):
         views, labels, fnames = super().forward(batch)
+
+        # get current device
+        device = views[0].device
         # Return only first view as MAE needs only a single view per image.
         ret = views[0]
         if self.type == 'sobel':
@@ -795,9 +802,22 @@ class FourierCollateFunction(MultiViewCollateFunction):
             # as float32
             ret = ret.float()
             # plot ret[0]
-            # import matplotlib.pyplot as plt
-            # plt.imshow(ret[0].permute(1,2,0).detach().numpy())
+            import matplotlib.pyplot as plt
+            ret = views[0]
+            from kornia import morphology as morph
+            from kornia import feature as feat
+
+            # grayscale version of ret
+            gray = ret.mean(dim=1, keepdim=True)
+            sold2_detector = feat.SOLD2_detector()
+            a = sold2_detector(gray)
+
+            kernel = torch.tensor([[0, 1, 0], [1, 1, 1], [0, 1, 0]]).to(views[0].device)
+            ret = morph.gradient(ret, kernel)
+            # plt.imshow(a[0].permute(1,2,0).detach().numpy()*255)
             # plt.show()
+            plt.imshow(a[0].detach().numpy())
+            plt.show()
         elif self.type == 'canny':
 
             a, b = filters.canny(ret, sigma=(2, 2), low_threshold=0.2, high_threshold=0.9, kernel_size=(9, 9))
@@ -811,6 +831,35 @@ class FourierCollateFunction(MultiViewCollateFunction):
             # plt.show()
             # plt.imshow(b[image_id].permute(1,2,0).detach().numpy())
             # plt.show()
+        elif self.type == 'low_pass':
+
+            # 5x5 low pass filter
+            kernel = torch.tensor([[1, 1, 1, 1, 1], [1, 1, 1, 1, 1], [1, 1, 1, 1, 1],
+                                   [1, 1, 1, 1, 1], [1, 1, 1, 1, 1]]).to(views[0].device)
+            kernel = kernel / kernel.sum()
+            kernel = kernel.unsqueeze(0)
+            ret = filters.filter2d(ret, kernel)
+
+            import matplotlib.pyplot as plt
+            plt.imshow(ret[0].permute(1, 2, 0).detach().numpy())
+            plt.show()
+
+        elif self.type == 'high_pass':
+
+            # 5x5 high pass filter
+            kernel = torch.tensor([[-1, -1, -1, -1, -1], [-1, -1, -1, -1, -1], [-1, -1, 15, -1, -1],
+                                   [-1, -1, -1, -1, -1], [-1, -1, -1, -1, -1]]).to(views[0].device)
+
+            kernel = kernel / kernel.sum()
+            kernel = kernel.unsqueeze(0)
+            ret = filters.filter2d(ret, kernel)
+
+            import matplotlib.pyplot as plt
+            plt.imshow(ret[0].permute(1, 2, 0).detach().numpy())
+            plt.show()
+
+        else:
+            raise ValueError('Unknown type of transformation')
 
         return (views[0], ret), labels, fnames
 
