@@ -556,6 +556,8 @@ def get_data_loaders(
         col_fn = vicregl_collate_fn
     elif model == vqganMAEModel:
         col_fn = vqgan_collate_fn
+    elif model == sobelMAEModel:
+        col_fn = mae_collate_fn
     dataloader_train_ssl = torch.utils.data.DataLoader(
         dataset_train_ssl,
         batch_size=batch_size_train_ssl,
