@@ -3129,5 +3129,3 @@ if __name__ == "__main__":
             wandb.finish()
             time.sleep(6)
         print("-" * len(header))
-
-main()
