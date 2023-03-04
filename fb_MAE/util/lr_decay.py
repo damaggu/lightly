@@ -30,9 +30,13 @@ def param_groups_lrd(model, weight_decay=0.05, no_weight_decay_list=[], layer_de
             except:
                 num_layers = len(model.encoder.transformer) + 1
     except:
-        #TODO: double check this number
-        module_list = [module for module in model.backbone.modules()]
-        num_layers = len(module_list) + 1
+        try:
+            #TODO: double check this number
+            module_list = [module for module in model.backbone.modules()]
+            num_layers = len(module_list) + 1
+        except:
+            module_list = [module for module in model.modules()]
+            num_layers = len(module_list) + 1
 
     layer_scales = list(layer_decay ** (num_layers - i) for i in range(num_layers + 1))
 
