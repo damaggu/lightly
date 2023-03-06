@@ -75,7 +75,7 @@ args["patch_size"] = 16
 args["patch_size"] = int(args["patch_size"] * ratio)
 
 # vit settings
-args["vit_name"] = "vit_tiny"
+args["vit_name"] = "vit_base"
 
 if args["vit_name"] == "vit_base":
     args["vit_dim"] = 768
@@ -436,7 +436,7 @@ args['run_name'] = "sa3rkof5"
 args['model_name'] = 'MAE'
 args['load_pretrained'] = False
 args['linear_probing'] = False
-args["model_dim"] = 192
+args["model_dim"] = args["vit_dim"]
 
 artifact = run.use_artifact('maggu/imagenette_benchmark_Tiny/model-' + args['run_name'] + ':v58', type='model')
 artifact_dir = artifact.download()
@@ -498,6 +498,17 @@ if model._get_name() == 'MAEModel' and args['load_pretrained'] and args['linear_
     save_heads = copy.deepcopy(model.backbone.heads)
     # self.backbone.heads = nn.Identity()
     del model.backbone.heads
+
+# do new wandb init for linear probing
+wandb.init(
+    project="imagenette_benchmark_eval",
+    entity="maggu",
+    # settings=wandb.Settings(start_method="thread"),
+    save_code=False,
+    name=args['run_name'] + "_linear_probing",
+)
+wandb.config.update(args)
+wandb.watch(model, log="all")
 
 max_accuracy, acc1, _, _ = evaluate_model_linear_probing(model.backbone, model.dataloader_train_ssl,
                                                          model.dataloader_test, device, args,

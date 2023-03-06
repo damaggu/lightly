@@ -25,6 +25,8 @@ from torch._six import inf
 
 from fb_MAE.util.lr_decay import param_groups_lrd
 
+import wandb
+
 
 # code for kNN prediction from here:
 # https://colab.research.google.com/github/facebookresearch/moco/blob/colab-notebook/colab/moco_cifar10_demo.ipynb
@@ -239,7 +241,7 @@ def evaluate_model_linear_probing(
             optimizer = AdamW(
                 model.parameters(),
                 # param_groups,
-                lr=args["ft_lr_factor"] * 0.001,
+                lr=args["ft_lr_factor"] * 1e-4,
                 weight_decay=0.3,
                 betas=(0.9, 0.999),
                 eps=1e-6,
@@ -310,6 +312,13 @@ def evaluate_model_linear_probing(
         print(
             f"Accuracy of the network on the {len(data_loader_val)} test images: {test_stats['acc1']:.1f}%"
         )
+        wandb.log({
+            "learning_rate": train_stats["lr"],
+            "train_loss": train_stats["loss"],
+            "test_loss": test_stats["loss"],
+            "train_acc1": test_stats["acc1"],
+            "train_acc5": test_stats["acc5"],
+        })
 
     for _, p in model.named_parameters():
         p.requires_grad = True
