@@ -1549,6 +1549,7 @@ class MAEModel(BenchmarkModule):
         )
         return [optim], [cosine_scheduler]
 
+
 class sobelMAEModel(BenchmarkModule):
     def __init__(
             self, dataloader_kNN, dataloader_train_ssl, dataloader_test, args, num_classes
@@ -1581,7 +1582,7 @@ class sobelMAEModel(BenchmarkModule):
             embed_input_dim=args["vit_dim"],
             hidden_dim=args["vit_decoder_dim"],
             mlp_dim=args["vit_decoder_dim"] * 4,
-            out_dim=self.patch_size ** 2 * 1 if args['MAE_collate_type'] == 'canny' else self.patch_size ** 2 * 3,
+            out_dim=self.patch_size ** 2 * 1 if (args['MAE_collate_type'] == 'canny' or args['MAE_collate_type'] == 'sobel') else self.patch_size ** 2 * 3,
             dropout=0,
             attention_dropout=0,
         )
@@ -1592,7 +1593,7 @@ class sobelMAEModel(BenchmarkModule):
             embed_input_dim=args["vit_dim"],
             hidden_dim=args["vit_decoder_dim"],
             mlp_dim=args["vit_decoder_dim"] * 4,
-            out_dim=self.patch_size ** 2 * 1 if args['MAE_collate_type'] == 'canny' else self.patch_size ** 2 * 3,
+            out_dim=self.patch_size ** 2 * 1 if (args['MAE_collate_type'] == 'canny' or args['MAE_collate_type'] == 'sobel') else self.patch_size ** 2 * 3,
             dropout=0,
             attention_dropout=0,
         )
@@ -1634,7 +1635,6 @@ class sobelMAEModel(BenchmarkModule):
         x_pred = utils.get_at_index(x_decoded, idx_mask)
         x_pred = self.sobel_decoder.predict(x_pred)
         return x_pred
-
 
     def training_step(self, batch, batch_idx):
         targets = None
