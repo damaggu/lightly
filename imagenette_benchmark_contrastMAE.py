@@ -170,7 +170,7 @@ else:
         args["batch_size"] = 128 if dist else 128
     else:
         args["batch_size"] = 4096 if dist else 16
-args['MAE_collate_type'] = 'sobelplus'
+args['MAE_collate_type'] = 'sobel'
 args['MAE_baseLR'] = 1.5e-4
 args['accumulate_grad_batches'] = 8
 args["effective_bs"] = args["batch_size"] * args['accumulate_grad_batches']
@@ -183,7 +183,7 @@ args["patch_size"] = 16
 args["patch_size"] = int(args["patch_size"] * ratio)
 
 # vit settings
-args["vit_name"] = "vqgan_vit_tiny"
+args["vit_name"] = "vit_tiny"
 
 if args["vit_name"] == "vit_base":
     args["vit_dim"] = 768
@@ -1582,7 +1582,7 @@ class sobelMAEModel(BenchmarkModule):
             embed_input_dim=args["vit_dim"],
             hidden_dim=args["vit_decoder_dim"],
             mlp_dim=args["vit_decoder_dim"] * 4,
-            out_dim=self.patch_size ** 2 * 1 if (args['MAE_collate_type'] == 'canny' or args['MAE_collate_type'] == 'sobel') else self.patch_size ** 2 * 3,
+            out_dim=self.patch_size ** 2 * 1 if args['MAE_collate_type'] == 'canny' else self.patch_size ** 2 * 3,
             dropout=0,
             attention_dropout=0,
         )
@@ -1593,7 +1593,7 @@ class sobelMAEModel(BenchmarkModule):
             embed_input_dim=args["vit_dim"],
             hidden_dim=args["vit_decoder_dim"],
             mlp_dim=args["vit_decoder_dim"] * 4,
-            out_dim=self.patch_size ** 2 * 1 if (args['MAE_collate_type'] == 'canny' or args['MAE_collate_type'] == 'sobel') else self.patch_size ** 2 * 3,
+            out_dim=self.patch_size ** 2 * 1 if args['MAE_collate_type'] == 'canny' else self.patch_size ** 2 * 3,
             dropout=0,
             attention_dropout=0,
         )
