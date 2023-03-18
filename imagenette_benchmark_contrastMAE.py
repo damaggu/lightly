@@ -183,7 +183,7 @@ args["patch_size"] = 16
 args["patch_size"] = int(args["patch_size"] * ratio)
 
 # vit settings
-args["vit_name"] = "vit_tiny"
+args["vit_name"] = "vqgan_vit_base"
 
 if args["vit_name"] == "vit_base":
     args["vit_dim"] = 768
@@ -217,6 +217,14 @@ elif args["vit_name"] == "vqgan_vit_tiny":
     args["vit_decoder_dim"] = 128
     args["vit_decoder_layers"] = 1
     args["vit_decoder_heads"] = 2
+elif args["vit_name"] == "vqgan_vit_base":
+    args["vit_dim"] = 256
+    args["vit_depth"] = 12
+    args["vit_heads"] = 16
+    args["vit_mlp_dim"] = 4 * args["vit_dim"]
+    args["vit_decoder_dim"] = 512
+    args["vit_decoder_layers"] = 4
+    args["vit_decoder_heads"] = 8
 else:
     raise ValueError("Invalid vit name")
 
@@ -2867,7 +2875,7 @@ class TiCoModel(BenchmarkModule):
 # ]
 
 models = [
-    # vqganMAEModel,
+    vqganMAEModel,
     # SLIPModel,
     # vqganMAEModel,
     # SequentialSLIPModel,
@@ -2878,7 +2886,7 @@ models = [
     # SwaVModel,
     # DINOModel,
     # BYOLModel, # bs 256; ft 128
-    MAEModel,  # bs 256; ft 64
+    # MAEModel,  # bs 256; ft 64
     # MSNModel,
     # SimCLRModel,
     # TiCoModel,
