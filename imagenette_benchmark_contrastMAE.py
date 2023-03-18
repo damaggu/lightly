@@ -164,13 +164,13 @@ if eli:
     args["max_epochs"] = 1000
     args["val_epoch"] = 50
 else:
-    args["max_epochs"] = 800
-    args["val_epoch"] = 10
+    args["max_epochs"] = 10000
+    args["val_epoch"] = 50
     if input_size == 224:
         args["batch_size"] = 128 if dist else 128
     else:
         args["batch_size"] = 4096 if dist else 16
-args['MAE_collate_type'] = 'sobel'
+args['MAE_collate_type'] = 'normal'
 args['MAE_baseLR'] = 1.5e-4
 args['accumulate_grad_batches'] = 8
 args["effective_bs"] = args["batch_size"] * args['accumulate_grad_batches']
@@ -2177,7 +2177,7 @@ class contrastMAEModel(BenchmarkModule):
                 * (epoch - self.warmup_epochs)
                 / (args["max_epochs"] - self.warmup_epochs)
             )
-            )
+        )
 
 
 # class MSNModel(BenchmarkModule):
@@ -2871,14 +2871,14 @@ models = [
     # SLIPModel,
     # vqganMAEModel,
     # SequentialSLIPModel,
-    sobelMAEModel,
+    # sobelMAEModel,
     # SimMIMModel,
 
     # SimSiamModel,
     # SwaVModel,
     # DINOModel,
     # BYOLModel, # bs 256; ft 128
-    # MAEModel,  # bs 256; ft 64
+    MAEModel,  # bs 256; ft 64
     # MSNModel,
     # SimCLRModel,
     # TiCoModel,
@@ -3017,7 +3017,7 @@ if __name__ == "__main__":
                 #     experiment_version = logger.version
                 log_path = os.path.join(wandb_logger.experiment.dir, 'checkpoints')
                 checkpoint_callback = pl.callbacks.ModelCheckpoint(
-                    dirpath=log_path
+                    dirpath=log_path, every_n_train_steps=args["val_epoch"], save_top_k=1
                 )
 
                 wandb_logger.watch(benchmark_model, log_graph=False, log="all", log_freq=1)
