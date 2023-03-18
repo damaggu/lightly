@@ -3021,7 +3021,6 @@ if __name__ == "__main__":
                 )
 
                 wandb_logger.watch(benchmark_model, log_graph=False, log="all", log_freq=1)
-
                 # trainer = pl.Trainer(
                 #     args["max_epochs"]=args["max_epochs"],
                 #     accelerator="cpu",
