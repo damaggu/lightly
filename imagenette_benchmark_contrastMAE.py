@@ -3028,7 +3028,6 @@ if __name__ == "__main__":
                 #     strategy="dp",
                 #     num_processes=0,
                 # )
-
                 trainer = pl.Trainer(
                     max_epochs=args["max_epochs"],
                     gpus=gpus,
