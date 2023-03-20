@@ -1,5 +1,5 @@
-git clone https://github.com/damaggu/lightly.git
-cd lightly
+#git clone https://github.com/damaggu/lightly.git
+#cd lightly
 pip install -r requirements/base.txt
 pip install -r requirements/dev.txt
 pip install -r requirements/video.txt
