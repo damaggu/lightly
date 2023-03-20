@@ -1801,7 +1801,7 @@ class vqganMAEModel(BenchmarkModule):
         # self.criterion = nn.CrossEntropyLoss()
 
         self.vqganmodel = load_vqgan_model(
-            config_path="./vqgan/model.yaml", checkpoint_path="./vqgan/last.ckpt"
+            config_path="./vqgan/model/model.yaml", checkpoint_path="./vqgan/model/last.ckpt"
         )
         self.vqganmodel.eval()
         self.vqgan_batch_size = 64
